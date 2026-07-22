@@ -46,6 +46,7 @@ async function getDb() {
     client = new MongoClient(MONGO_URL, {
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 5000,
+      tls: true,
     });
     clientPromise = client.connect();
   }
