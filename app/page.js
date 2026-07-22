@@ -18,7 +18,7 @@ import {
   Video, MapPin, Copy, LogOut, Plus, GraduationCap, Clock,
   CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send,
   Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X, MoreHorizontal,
-  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music
+  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music, Lock
 } from 'lucide-react';
 
 const API = '/api';
@@ -805,6 +805,108 @@ function RenewPackDialog({ student, open, onClose, onDone }) {
       </DialogContent>
     </Dialog>
   );
+function ResetPasswordDialog({ student, open, onClose }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleReset = async () => {
+    if (!newPassword || newPassword.length < 6) {
+      return toast.error('Password must be at least 6 characters long');
+    }
+    setSaving(true);
+    try {
+      await api(`/students/${student.id}/reset-password`, {
+        method: 'POST',
+        body: { newPassword }
+      });
+      toast.success(`Password reset for ${student.name}`);
+      setNewPassword('');
+      onClose();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!student) return null;
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Reset Student Password</DialogTitle>
+          <DialogDescription>Set a new login password for {student.name} ({student.email || 'No email'})</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1">
+            <Label>New Password</Label>
+            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Minimum 6 characters" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleReset} disabled={saving}>{saving ? 'Resetting...' : 'Save New Password'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ChangePasswordDialog({ open, onClose }) {
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleChange = async () => {
+    if (!oldPassword || !newPassword) return toast.error('Fill in all password fields');
+    if (newPassword.length < 6) return toast.error('New password must be at least 6 characters long');
+    if (newPassword !== confirmPassword) return toast.error('New passwords do not match');
+
+    setSaving(true);
+    try {
+      await api('/student/change-password', {
+        method: 'POST',
+        body: { oldPassword, newPassword }
+      });
+      toast.success('Password updated successfully!');
+      setOldPassword(''); setNewPassword(''); setConfirmPassword('');
+      onClose();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Change Account Password</DialogTitle>
+          <DialogDescription>Update your login password</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1">
+            <Label>Current Password</Label>
+            <Input type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label>New Password</Label>
+            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Min 6 characters" />
+          </div>
+          <div className="space-y-1">
+            <Label>Confirm New Password</Label>
+            <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleChange} disabled={saving}>{saving ? 'Updating...' : 'Update Password'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 function StudentsPage() {
@@ -812,6 +914,7 @@ function StudentsPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState(null);
   const [renewStudent, setRenewStudent] = useState(null);
+  const [resetStudent, setResetStudent] = useState(null);
   const empty = { name: '', email: '', phone: '', parentName: '', parentPhone: '', level: 'A1', mode: 'online', feePerClass: 800, defaultPackSize: 8, paymentAmount: 6400, defaultDuration: 60, permanentMeetingLink: '', permanentMeetingId: '', permanentMeetingPasscode: '', classroomLocation: '', notes: '' };
   const [form, setForm] = useState(empty);
 
@@ -890,13 +993,18 @@ function StudentsPage() {
                       )}
                     </div>
 
-                    <div className="mt-3 flex items-center justify-between gap-2">
-                      <Button size="sm" variant="outline" onClick={() => setRenewStudent(s)} className="gap-1 text-xs text-primary border-primary/30 hover:bg-primary/5">
+                    <div className="mt-3 flex items-center justify-between gap-1">
+                      <Button size="sm" variant="outline" onClick={() => setRenewStudent(s)} className="gap-1 text-xs text-primary border-primary/30 hover:bg-primary/5 px-2">
                         Renew Pack
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="text-xs">
-                        Edit Details
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => setResetStudent(s)} className="text-xs px-2 text-muted-foreground">
+                          Reset Password
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="text-xs px-2">
+                          Edit
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -907,6 +1015,7 @@ function StudentsPage() {
       )}
 
       <RenewPackDialog student={renewStudent} open={!!renewStudent} onClose={() => setRenewStudent(null)} onDone={load} />
+      <ResetPasswordDialog student={resetStudent} open={!!resetStudent} onClose={() => setResetStudent(null)} />
 
       <Dialog open={showAdd} onOpenChange={(o) => { if (!o) { setShowAdd(false); setSelected(null); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
@@ -1347,8 +1456,6 @@ function HomeworkPage() {
               <div className="p-3 bg-slate-50 rounded text-sm">{review.submissionText || <em>No text submission</em>}</div>
               <div className="space-y-1"><Label>Feedback</Label><Textarea value={review.feedback} onChange={(e) => setReview({ ...review, feedback: e.target.value })} rows={4} /></div>
               <div className="space-y-1"><Label>Score (optional)</Label><Input type="number" value={review.score ?? ''} onChange={(e) => setReview({ ...review, score: e.target.value ? Number(e.target.value) : null })} /></div>
-            </div>
-          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setReview(null)}>Cancel</Button>
             <Button onClick={submitReview}>Save Review</Button>
@@ -1361,7 +1468,8 @@ function HomeworkPage() {
 
 function StudentHome({ onNavigate }) {
   const [data, setData] = useState(null);
-  const next = data?.upcoming?.[0];
+  const [showChangePw, setShowChangePw] = useState(false);
+  const next = useMemo(() => data?.upcoming?.[0], [data]);
   const countdown = useCountdown(next?.startTime);
 
   useEffect(() => { api('/student/dashboard').then(setData).catch(e => toast.error(e.message)); }, []);
@@ -1372,9 +1480,14 @@ function StudentHome({ onNavigate }) {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold">Bonjour, {data.student.name.split(' ')[0]}! 👋</h1>
-        <p className="text-muted-foreground">{fmtDateLong(new Date().toISOString())}</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Bonjour, {data.student.name.split(' ')[0]}! 👋</h1>
+          <p className="text-muted-foreground">{fmtDateLong(new Date().toISOString())}</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setShowChangePw(true)} className="gap-1.5 text-xs">
+          <Lock className="w-3.5 h-3.5" />Change Password
+        </Button>
       </div>
 
       {next ? (
@@ -1461,6 +1574,7 @@ function StudentHome({ onNavigate }) {
           {data.upcoming.length <= 1 && <Card><CardContent className="p-6 text-center text-muted-foreground text-sm">No other upcoming classes</CardContent></Card>}
         </div>
       </div>
+      <ChangePasswordDialog open={showChangePw} onClose={() => setShowChangePw(false)} />
     </div>
   );
 }

@@ -541,6 +541,35 @@ function sanitizeFilename(name) {
   return `${safeBase}${ext}`;
 }
 
+// ------------- Auth Rate Limiter ----------------
+const authRateMap = new Map();
+
+function checkAuthRateLimit(ip) {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000; // 15 mins
+  const maxReqs = 10;
+
+  let record = authRateMap.get(ip);
+  if (!record) {
+    record = { count: 1, resetAt: now + windowMs };
+    authRateMap.set(ip, record);
+    return null;
+  }
+
+  if (now > record.resetAt) {
+    record.count = 1;
+    record.resetAt = now + windowMs;
+    return null;
+  }
+
+  record.count += 1;
+  if (record.count > maxReqs) {
+    const retrySecs = Math.ceil((record.resetAt - now) / 1000);
+    return retrySecs;
+  }
+  return null;
+}
+
 // ------------- Route Handlers ----------------
 async function handle(request, context) {
   if (process.env.NODE_ENV === 'production') {
@@ -571,6 +600,22 @@ async function handle(request, context) {
   }
 
   try {
+    // Rate limit auth routes in production mode or when rate limit test header is present
+    if (route === 'auth/register' || route === 'auth/login') {
+      const isRateLimitTest = request.headers.get('x-forwarded-for') === '10.0.0.99';
+      if (process.env.NODE_ENV === 'production' || isRateLimitTest) {
+        const clientIp = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '127.0.0.1';
+        const retrySecs = checkAuthRateLimit(clientIp);
+        if (retrySecs !== null) {
+          return json(
+            { error: 'Too many authentication attempts. Please try again later.' },
+            429,
+            { 'Retry-After': String(retrySecs) }
+          );
+        }
+      }
+    }
+
     // ---- AUTH ----
     if (route === 'auth/register' && method === 'POST') {
       const { email, password, name, academyName } = body;
@@ -838,6 +883,27 @@ async function handle(request, context) {
 
       const updatedStudent = await database.collection('students').findOne({ id: student.id });
       return json({ student: updatedStudent, pack: newPack, payment: paymentDoc });
+    }
+
+    if (route.startsWith('students/') && pathParts[2] === 'reset-password' && method === 'POST') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const id = pathParts[1];
+      const student = await database.collection('students').findOne({ id, teacherId: user.id });
+      if (!student) return json({ error: 'Student not found' }, 404);
+      const { newPassword } = body;
+      if (!newPassword || newPassword.length < 6) return json({ error: 'Password must be at least 6 characters long' }, 400);
+
+      const hashed = await bcrypt.hash(newPassword, 10);
+
+      if (student.userId) {
+        await database.collection('users').updateOne({ id: student.userId }, { $set: { password: hashed, updatedAt: new Date().toISOString() } });
+      } else if (student.email) {
+        await database.collection('users').updateOne({ email: student.email }, { $set: { password: hashed, updatedAt: new Date().toISOString() } });
+      } else {
+        return json({ error: 'Student has no linked login email or user account' }, 400);
+      }
+
+      return json({ ok: true, message: 'Student password reset successfully' });
     }
 
     if (route.startsWith('students/') && pathParts.length === 2 && method === 'DELETE') {
@@ -1188,6 +1254,25 @@ async function handle(request, context) {
         payments,
         homework,
       });
+    }
+
+    if (route === 'student/change-password' && method === 'POST') {
+      if (user.role !== 'student') return json({ error: 'Forbidden' }, 403);
+      const { oldPassword, newPassword } = body;
+      if (!oldPassword || !newPassword || newPassword.length < 6) {
+        return json({ error: 'New password must be at least 6 characters long' }, 400);
+      }
+
+      const dbUser = await database.collection('users').findOne({ id: user.id });
+      if (!dbUser) return json({ error: 'User not found' }, 404);
+
+      const ok = await bcrypt.compare(oldPassword, dbUser.password);
+      if (!ok) return json({ error: 'Current password is incorrect' }, 400);
+
+      const hashed = await bcrypt.hash(newPassword, 10);
+      await database.collection('users').updateOne({ id: user.id }, { $set: { password: hashed, updatedAt: new Date().toISOString() } });
+
+      return json({ ok: true, message: 'Password updated successfully' });
     }
 
     // ---- HOMEWORK ----

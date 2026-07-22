@@ -1,0 +1,575 @@
+LANGUAGE SCOOP
+Master Product Specification
+Product Requirements • Software Requirements • Security • Testing • Production Handover
+Document version
+1.0
+Product
+Language Scoop
+Primary users
+French teacher and enrolled students
+Prepared for
+Development, production readiness and client handover
+Date
+22 July 2026
+Single source of truth for Emergent, Antigravity, Codex, Claude Code and future developers.
+Document Control
+Purpose: This document consolidates the product scope, workflows, billing model, database expectations, security requirements, acceptance criteria, testing plan, deployment requirements and client-handover responsibilities for Language Scoop.
+Version
+Date
+Status
+Summary
+1.0
+22 Jul 2026
+Current
+Initial consolidated master specification following production audit and billing-model confirmation.
+How to Use This Document
+Treat this document as the authoritative product specification.
+Coding agents must inspect the current repository before making changes and must identify conflicts between code and this specification.
+Security fixes and production blockers take priority over new features.
+Major schema or billing changes require a migration plan and approval before implementation.
+No agent should silently reinterpret attendance, billing or payment rules.
+Table of Contents
+1. Product Overview
+2. Users, Roles and Permissions
+3. Product Scope
+4. Core Workflows
+5. Scheduling and Class Management
+6. Attendance Rules
+7. Billing, Class Packs and Payments
+8. Monthly Class Counters and Reporting
+9. Homework and Practice Exercises
+10. Zoom and Online-Class Links
+11. Notifications and PWA
+12. Data Model and API Requirements
+13. Security and Privacy Requirements
+14. Accessibility, Responsive Design and UX
+15. Reliability, Performance and Observability
+16. Testing and Acceptance Criteria
+17. Production Deployment Plan
+18. Client Handover
+19. Implementation Phases and Priorities
+20. Open Decisions and Future Roadmap
+1. Product Overview
+1.1 Product Summary
+Language Scoop is a web-based and installable PWA for a French teacher who conducts online classes through Zoom and offline classes in a classroom. The application helps the teacher manage students, schedules, attendance, prepaid class packs, payments, homework, practice exercises, meeting links and monthly class reporting. Students receive a simple dashboard showing upcoming classes, Zoom links, class history, homework, practice exercises, payment and pack information.
+1.2 Business Problem
+The teacher may forget upcoming classes or fail to create and share a Zoom link.
+The teacher needs a reliable record of how many classes each student completed during a calendar month.
+Fees are collected in advance based on a per-class rate and a selected pack size.
+A prepaid pack may span multiple months and must not reset at month-end.
+Students need direct access to their schedule, meeting links, homework and remaining prepaid classes.
+1.3 Product Goals
+Provide one reliable operational dashboard for the teacher.
+Reduce missed classes and missing meeting links.
+Make attendance finalisation quick and accurate.
+Keep class-pack deductions auditable and idempotent.
+Show both teacher and student the number of completed classes in the current month.
+Preserve permanent pack, attendance and payment history.
+Operate securely on desktop and mobile as a PWA.
+1.4 Non-Goals for Version 1
+Automatic Zoom meeting creation through a paid API is not required.
+Automatic collection of online payments is not required; payments may be recorded manually.
+Full learning-management-system features such as live video, proctoring or automated grading are out of scope.
+Multi-teacher marketplace functionality is out of scope unless separately approved.
+2. Users, Roles and Permissions
+Role
+Purpose
+Key permissions
+Teacher
+Primary administrator and instructor
+Manage own students, classes, attendance, packs, payments, homework, practice, links, dashboards and reports.
+Student
+Learner enrolled with the teacher
+Read own schedule, meeting links, class history, monthly counters, pack status, payment history, homework and practice. Submit homework if enabled.
+System
+Background application services
+Calculate monthly counters, enforce authorization, send configured notifications, maintain audit logs and validate data integrity.
+2.1 Authorization Principles
+Every protected API route must validate authentication, role and record ownership.
+A student must never access another student's schedule, files, payments, packs, homework or attendance.
+Teacher-only notes and internal financial adjustments must not be visible to students.
+UUID unpredictability is not authorization.
+Financial and pack-changing actions must identify the teacher who performed them.
+3. Product Scope
+3.1 Teacher Features
+Teacher dashboard with today's schedule and production alerts.
+Student creation, editing, archiving, reactivation and search.
+Online/offline class scheduling, rescheduling, cancellation and history.
+Zoom-link storage and missing-link alerts.
+Attendance finalisation with billable override.
+Prepaid pack creation, activation, completion, renewal and history.
+Advance payment recording and payment history.
+Current-month class counts per student and overall.
+Homework creation and assignment.
+Practice-exercise creation and tracking.
+Notification management where configured.
+3.2 Student Features
+Secure login and own-profile access.
+Upcoming classes with online/offline details.
+Clickable Zoom links that open the Zoom app or browser.
+Current-month completed-class count.
+Active pack progress, classes remaining and renewal status.
+Class and attendance history.
+Homework and practice exercises.
+Pack and payment history where appropriate.
+PWA installation on supported devices.
+4. Core Workflows
+4.1 Student Onboarding
+Teacher creates a student profile.
+Teacher sets the student's fee per class and default pack size.
+Teacher creates initial login credentials or invitation workflow.
+Teacher creates a prepaid pack and records advance payment.
+Once payment is confirmed, the pack becomes active.
+Student logs in and sees their own schedule, monthly count and pack status.
+4.2 Class Lifecycle
+Teacher schedules an online or offline class.
+For online classes, teacher adds a valid Zoom link before the configured deadline.
+Class appears on teacher and student dashboards.
+After the class, teacher marks attendance and confirms whether it is billable.
+A qualifying billable class consumes one credit from the active pack exactly once.
+The class appears in monthly and historical reporting.
+4.3 Pack Renewal
+System warns when two, one and zero classes remain.
+When the last billable class is consumed, the pack becomes completed.
+The student is shown as renewal required.
+Teacher selects Renew Pack and confirms fee, size and amount.
+Teacher records the advance payment.
+New pack becomes active; completed pack remains in history.
+5. Scheduling and Class Management
+5.1 Class Fields
+Field
+Requirement
+Teacher
+Required; class belongs to one teacher.
+Student
+Required; one primary student per class unless group classes are introduced later.
+Class type
+Online or offline.
+Scheduled date/time
+Stored consistently; display in configured timezone, default Asia/Kolkata.
+Duration
+Required or defaulted from teacher settings.
+Location
+Required for offline class if applicable.
+Zoom URL
+Optional at creation, required before an online class starts.
+Status
+Scheduled, completed, cancelled, rescheduled or pending.
+Attendance status
+Separate from schedule status.
+Billable flag
+Explicit or derived with teacher override.
+5.2 Scheduling Rules
+Detect teacher and student time conflicts.
+Do not create duplicate recurring instances.
+Rescheduling must preserve history and links between original and replacement class where practical.
+Cancelling or rescheduling must not deduct pack credits.
+Month and timezone boundaries must be tested explicitly.
+6. Attendance Rules
+Attendance status
+Counts as completed this month
+Deducts from pack
+Default
+Present
+Yes
+Yes
+Billable
+Student no-show
+Yes
+Yes
+Billable
+Student cancelled late
+Yes
+Yes
+Billable
+Student cancelled on time
+No
+No
+Non-billable
+Teacher cancelled
+No
+No
+Non-billable
+Rescheduled
+No
+No
+Non-billable
+Trial
+Yes, labelled trial
+No
+Non-billable
+Complimentary
+Yes, labelled complimentary
+No
+Non-billable
+Pending
+No
+No
+Not finalised
+6.1 Idempotency and Reversal
+Finalising the same attendance twice must not deduct two credits.
+Changing non-billable to billable creates exactly one deduction.
+Changing billable to non-billable creates exactly one reversal.
+Changing between two billable statuses must not create another deduction.
+Pack balances must never silently become negative.
+Attendance may still be recorded when no active pack exists, but the teacher must receive a clear renewal/outstanding warning.
+7. Billing, Class Packs and Payments
+Final commercial model: Prepaid class packs calculated from a per-class fee, combined with independent monthly attendance reporting.
+7.1 Pack Calculation
+Pack amount = fee per class × number of classes in the pack.
+Example
+Value
+Fee per class
+₹800
+Pack size
+8 classes
+Advance payment
+₹6,400
+July completed classes
+5
+July pack usage
+5 of 8
+August completed classes
+3
+Pack after August's third qualifying class
+8 of 8 — Completed
+7.2 Pack Statuses
+Draft
+Awaiting payment
+Active
+Completed
+Cancelled
+Expired only if intentional expiry is later introduced.
+7.3 Payment Rules
+Payments are separate records and must not be overwritten.
+A pack becomes active only after confirmed advance payment, unless the teacher uses a documented override.
+Partial payments may be supported but must not be confused with a fully paid pack.
+Payment records include amount, date, method, reference, status, notes and recorded-by user.
+Monthly revenue received is based on confirmed payment dates, not on classes attended during the month.
+Historical fee changes must not alter previous packs; each pack stores a fee-per-class snapshot.
+7.4 Financial Definitions
+Metric
+Definition
+Pack value
+Fee-per-class snapshot × total classes.
+Advance payment received
+Confirmed payments linked to the pack.
+Pack outstanding
+Pack value minus confirmed payments.
+Monthly revenue received
+Confirmed payments whose payment date falls within the selected month.
+Billable classes this month
+Qualifying classes in the selected month that consume or should consume pack credit.
+Classes completed this month
+All qualifying completed classes in the selected month, including labelled trial/complimentary classes where required.
+8. Monthly Class Counters and Reporting
+8.1 Two Independent Counters
+Counter
+Reset behaviour
+Purpose
+Monthly completed-class counter
+Logical reset at each calendar month because it is calculated by date range.
+Shows teacher and student how many qualifying classes were completed in the selected month.
+Active pack usage
+Does not reset monthly; ends only when the pack is completed, cancelled or otherwise closed.
+Tracks prepaid classes consumed across one or more months.
+8.2 Dashboard Requirements
+Teacher dashboard
+Classes completed this month.
+Billable classes this month.
+Online and offline class breakdown.
+Active students and active packs.
+Packs with two or fewer classes remaining.
+Exhausted packs and renewals required.
+Advance payments received this month.
+Outstanding pack payments.
+Student dashboard
+Classes completed this month.
+Billable classes this month where appropriate.
+Current pack progress such as 5 of 8 used.
+Classes remaining.
+Pack status and start date.
+Fee per class, pack value and payment status.
+Renewal required warning.
+9. Homework and Practice Exercises
+9.1 Homework
+Teacher can create, edit, assign and delete homework.
+Assignments may include title, instructions, due date and approved attachments.
+Student can view only assignments intended for them.
+Submission and review may be enabled if currently supported.
+Uploaded files must pass security controls described later.
+9.2 Practice
+Teacher can create exercises and assign them to one or more students.
+Student can view and complete assigned practice.
+Completion status should be visible without exposing another student's data.
+French accented characters and Unicode must render correctly.
+10. Zoom and Online-Class Links
+Version 1 may store manually created Zoom links; automatic Zoom API creation is not required.
+Only valid HTTPS meeting URLs should be accepted.
+Online classes without links should trigger a prominent teacher alert.
+A student may view only links for their own classes.
+Clicking the link should open the Zoom app when supported or fall back to the browser.
+Cancelled classes must not retain an active-looking join action.
+11. Notifications and PWA
+11.1 Notification Types
+Upcoming class reminder.
+Missing Zoom-link reminder to teacher.
+Schedule change or cancellation.
+Homework assignment.
+Low pack balance or renewal required.
+Payment reminder where explicitly enabled.
+11.2 PWA Requirements
+Valid manifest, icons, start URL and display mode.
+Service worker must not cache private data in a way that remains available after logout.
+Application must use HTTPS in production.
+Offline behaviour must be defined; failed writes must not appear successful.
+Updates should not leave stale financial or attendance data.
+12. Data Model and API Requirements
+12.1 Recommended Core Collections
+Collection
+Key fields
+users
+id, role, email/login, password hash, status, createdAt, updatedAt
+students
+id, teacherId, userId, name, feePerClass, defaultPackSize, activePackId, status, timezone
+classes
+id, teacherId, studentId, scheduledAt, classType, status, attendanceStatus, isBillable, packId, attendanceFinalisedAt
+classPacks
+id, teacherId, studentId, totalClasses, usedClasses, feePerClassSnapshot, totalAmount, paidAmount, status, startedAt, completedAt
+packLedger
+id, packId, studentId, classId, type, quantity, reason, idempotencyKey, createdBy, createdAt
+payments
+id, teacherId, studentId, packId, amount, currency, paymentDate, method, reference, status, notes, createdBy
+homework
+id, teacherId, assignedStudentIds, title, instructions, dueDate, attachmentIds, status
+files
+id, owner/relationship metadata, safe name, detected MIME, size, storage reference, createdAt
+notifications
+id, recipientId, type, channel, payload, status, retry data, createdAt
+auditLogs
+id, actorId, action, entityType, entityId, before/after summary, timestamp
+12.2 API Standards
+Validate all inputs with explicit schemas.
+Return consistent error objects and safe messages.
+Use correct status codes.
+Enforce pagination for list endpoints.
+Use transactions or equivalent atomic/idempotent logic for attendance, pack and payment updates.
+Protect against mass assignment by mapping only approved fields.
+Use ownership checks for every student-linked resource.
+13. Security and Privacy Requirements
+13.1 Production-Blocking Security Fixes
+Priority
+Requirement
+P0
+Reject dangerous uploads including HTML, SVG, JavaScript, executables, shell scripts and unknown MIME types.
+P0
+Set safe download headers including Content-Disposition: attachment and X-Content-Type-Options: nosniff.
+P0
+Require authentication and ownership authorization for every file download.
+P0
+Remove any JWT fallback such as dev-secret; production must fail if a secure secret is absent.
+P0
+Remove or disable demo/default credentials in production.
+P0
+Separate development, test and production databases.
+P0
+Fix mobile navigation so all teacher pages are accessible.
+13.2 File Security
+Allowlist only genuinely required formats such as PDF, JPEG, PNG, WEBP, TXT and selected Office Open XML formats.
+Validate MIME type, extension, size and safe filename server-side.
+Do not trust browser-provided MIME type alone.
+Use authenticated fetch/Blob download or short-lived signed URLs if JWT remains in localStorage.
+Do not expose file IDs publicly without authorization.
+13.3 Authentication
+Passwords must be securely hashed.
+Login endpoint requires rate limiting and account-enumeration-safe responses.
+JWTs require expiration and a strong production secret.
+Long-term recommendation: migrate authentication tokens to Secure, HttpOnly, SameSite cookies.
+Production errors must not expose stack traces, queries or secrets.
+13.4 Security Headers
+Content-Security-Policy appropriate to the application.
+Strict-Transport-Security in production.
+X-Content-Type-Options: nosniff.
+Referrer-Policy and Permissions-Policy.
+Clickjacking protection; do not use ALLOWALL unless embedding is a confirmed requirement.
+13.5 Privacy
+Collect only necessary student and payment data.
+Do not expose personal data in URLs, logs or analytics.
+Define archive and deletion behaviour.
+Backups and restoration must be documented.
+Legal review is required before claiming compliance with any privacy law.
+14. Accessibility, Responsive Design and UX
+14.1 Responsive Navigation
+Keep no more than five primary bottom-navigation items.
+Use an accessible More menu or drawer for Practice, Billing, Payments and other hidden pages.
+Test at 320, 375, 390, 768, 1024, 1366 and 1920 pixels.
+No horizontal overflow or inaccessible controls.
+14.2 Accessibility
+Keyboard navigation, visible focus and logical tab order.
+Accessible labels for forms and icon-only buttons.
+Semantic headings and tables.
+Colour contrast and non-colour status indicators.
+Modal focus trapping and Escape-to-close behaviour.
+Support 200% zoom and reduced motion.
+Correct language attributes for English and French content.
+14.3 UX Principles
+Today's schedule and missing Zoom links must be immediately visible.
+Marking attendance should take minimal steps.
+Financial labels must clearly distinguish pack value, amount paid, outstanding amount and monthly payments received.
+Destructive actions require confirmation.
+Empty states and error messages should guide the teacher clearly.
+15. Reliability, Performance and Observability
+Friendly errors for database, network, upload and notification failures.
+Prevent duplicate submission with disabled states and idempotency keys.
+Log technical errors safely without personal data or secrets.
+Configure production error tracking, health checks and uptime monitoring.
+Use pagination and indexes for students, classes, payments and history.
+Document database backup frequency and tested restore procedure.
+Maintain rollback instructions for code and database migrations.
+16. Testing and Acceptance Criteria
+16.1 Required Automated Tests
+Area
+Minimum tests
+Security
+HTML/SVG upload rejected; allowed PDF accepted; unauthenticated file request denied; cross-student access denied; missing JWT secret fails production configuration.
+Authentication
+Login, invalid credentials, expired token, role restrictions, student isolation and production demo-credential check.
+Attendance
+Single deduction, duplicate submission, billable/non-billable reversal, status changes and no negative pack balance.
+Class packs
+Amount, remaining classes, completion, renewal, historical fee snapshot and cross-month continuity.
+Monthly counters
+Current-month count, previous-month selection, month boundary and Asia/Kolkata timezone.
+Payments
+Confirmed, pending, partial, duplicate handling and correct linkage to pack.
+UI
+All teacher pages reachable on mobile; student sees own monthly counter and pack status.
+Build
+Lint, type check, production build and integration suite.
+16.2 Key Acceptance Criteria
+An eight-class pack remains active across calendar months until eight billable classes are consumed.
+The monthly class count changes with the calendar month without altering pack history.
+Teacher and student see the same correct current-month completed-class count for the student.
+One class cannot consume two credits.
+A reversal restores exactly one credit.
+Completed packs remain visible in history and are never overwritten.
+No student can access another student's data or files.
+Dangerous files cannot execute in the application's origin.
+Production build succeeds with no critical security or data-integrity blockers.
+17. Production Deployment Plan
+17.1 Required Production Assets
+GitHub repository under agreed ownership.
+Production hosting account.
+Production MongoDB database separate from development and testing.
+Domain and DNS ownership.
+Production environment variables.
+Push notification keys if used.
+Monitoring, logging and backup services.
+17.2 Release Gate
+All P0 findings fixed and regression-tested.
+Billing and pack migration reviewed.
+Production data backup completed.
+Production secrets configured and not committed.
+Full test suite, lint, type check and production build pass.
+Mobile, accessibility and client acceptance checks completed.
+Rollback plan documented.
+18. Client Handover
+18.1 Handover Package
+Production URL and login instructions.
+Teacher operating guide.
+Student onboarding guide.
+How to create students, schedule classes and add Zoom links.
+How to mark attendance and apply billable overrides.
+How packs, renewals and advance payments work.
+How to assign homework and practice.
+PWA installation instructions.
+Repository, hosting, database, domain and service ownership details.
+Environment-variable inventory without exposing secrets in the document.
+Backup, restore, deployment and rollback procedures.
+Known limitations and maintenance/support agreement.
+18.2 Client-Owned Accounts
+Domain and DNS.
+Production hosting.
+Production database.
+Email or notification service accounts.
+GitHub repository or organisation, depending on agreement.
+Any future payment or Zoom API accounts.
+19. Implementation Phases and Priorities
+Phase
+Priority
+Scope
+Release rule
+Phase 1
+P0
+File security, file authorization, JWT configuration, demo credentials, database separation, mobile navigation and regression tests.
+Must complete before production data.
+Phase 2
+P1
+Prepaid class packs, ledger, payments, monthly counters, dashboards, migration and comprehensive tests.
+Must complete before billing feature is accepted.
+Phase 3
+P1
+Password management, rate limiting, security headers, backups, monitoring and handover documentation.
+Must complete before client handover.
+Phase 4
+P2
+Accessibility, performance, broader automated coverage and UX refinements.
+First maintenance cycle.
+19.1 Coding-Agent Operating Rules
+Inspect the repository and report conflicts before implementation.
+Create a feature branch and record the current commit.
+Implement one concern at a time with regression tests.
+Do not combine unrelated security and billing changes.
+Do not modify main or push without explicit approval.
+Do not use destructive migrations without backup and approval.
+Report changed files, commands, tests and remaining risks after each phase.
+20. Open Decisions and Future Roadmap
+20.1 Decisions Still Required
+Whether late cancellations and no-shows are always billable or configurable by student.
+Whether partial payment may activate a pack.
+Whether packs may expire.
+Whether students may upload homework submissions.
+Whether external reminders will use email, web push, WhatsApp or another channel.
+Whether multi-teacher or group-class support is needed later.
+20.2 Future Enhancements
+Automatic Zoom meeting creation if commercially justified.
+Online payment gateway.
+Parent/guardian accounts.
+Teacher analytics and exportable reports.
+Multi-language interface.
+Group classes and multiple teachers.
+Automated practice grading and learning progress reports.
+Appendix A — Production Audit Baseline
+Finding
+Initial severity
+Specification response
+Stored XSS through unrestricted file uploads
+Critical
+P0 allowlist, safe download headers and tests.
+Unauthenticated file downloads
+High
+P0 authentication and ownership authorization.
+Missing class packs
+High functional gap
+Full prepaid pack and ledger model defined in Sections 7, 8 and 12.
+Teacher mobile pages inaccessible
+Medium / handover blocker
+Accessible More navigation required.
+Missing password reset
+Medium
+Teacher-controlled reset or recovery flow in Phase 3.
+JWT fallback secret
+Production blocker
+Production must fail safely when secret is absent or weak.
+VAPID public key in frontend
+Configuration note
+Public key is not secret; private key must remain server-side.
+Appendix B — Definition of Done
+Functional requirements are implemented and accepted.
+No open critical or high security findings.
+No known billing-integrity or data-loss defects.
+Automated tests cover critical workflows.
+Production build and deployment succeed.
+Monitoring, backups and rollback are in place.
+Client guide and ownership transfer are complete.
+Client has approved the production release.
