@@ -17,7 +17,7 @@ import {
   LayoutDashboard, Users, CalendarDays, ClipboardList, BookOpen, IndianRupee,
   Video, MapPin, Copy, LogOut, Plus, GraduationCap, Clock,
   CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send,
-  Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X,
+  Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X, MoreHorizontal,
   Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music
 } from 'lucide-react';
 
@@ -1892,6 +1892,7 @@ function App() {
   const [view, setView] = useState('dashboard');
   const [loading, setLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
+  const [showMobileMore, setShowMobileMore] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('cf_token');
@@ -1930,6 +1931,7 @@ function App() {
     { key: 'fees', label: 'Fees', icon: IndianRupee },
   ];
   const nav = user.role === 'teacher' ? teacherNav : studentNav;
+  const displayNav = nav.length > 5 ? [...nav.slice(0, 4), { key: 'more', label: 'More', icon: MoreHorizontal }] : nav;
 
   const renderView = () => {
     if (user.role === 'teacher') {
@@ -1999,14 +2001,63 @@ function App() {
         </div>
 
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t z-20">
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${Math.min(nav.length, 5)}, 1fr)` }}>
-            {nav.slice(0, 5).map(n => (
-              <button key={n.key} onClick={() => setView(n.key)} className={`flex flex-col items-center gap-1 py-2 text-xs ${view === n.key ? 'text-primary' : 'text-slate-500'}`}>
-                <n.icon className="w-5 h-5" />
-                <span>{n.label}</span>
-              </button>
-            ))}
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${displayNav.length}, 1fr)` }}>
+            {displayNav.map(n => {
+              const isActive = view === n.key || (n.key === 'more' && nav.slice(4).some(sub => view === sub.key));
+              return (
+                <button
+                  key={n.key}
+                  onClick={() => {
+                    if (n.key === 'more') {
+                      setShowMobileMore(!showMobileMore);
+                    } else {
+                      setView(n.key);
+                      setShowMobileMore(false);
+                    }
+                  }}
+                  className={`flex flex-col items-center gap-1 py-2 text-xs ${isActive ? 'text-primary' : 'text-slate-500'}`}
+                >
+                  <n.icon className="w-5 h-5" />
+                  <span>{n.label}</span>
+                </button>
+              );
+            })}
           </div>
+
+          {/* More menu drawer */}
+          {showMobileMore && (
+            <div className="fixed inset-0 bg-black/40 z-10" onClick={() => setShowMobileMore(false)}>
+              <div
+                className="absolute bottom-16 left-0 right-0 bg-white rounded-t-xl border-t p-4 space-y-2 animate-in slide-in-from-bottom duration-200"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between pb-2 border-b">
+                  <span className="font-semibold text-slate-700">More Pages</span>
+                  <button onClick={() => setShowMobileMore(false)} className="p-1 hover:bg-slate-100 rounded">
+                    <X className="w-4 h-4 text-slate-500" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-3 pt-2">
+                  {nav.slice(4).map(sub => {
+                    const isSubActive = view === sub.key;
+                    return (
+                      <button
+                        key={sub.key}
+                        onClick={() => {
+                          setView(sub.key);
+                          setShowMobileMore(false);
+                        }}
+                        className={`flex flex-col items-center justify-center p-3 rounded-lg border gap-1.5 transition ${isSubActive ? 'bg-primary/10 border-primary text-primary font-medium' : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'}`}
+                      >
+                        <sub.icon className="w-5 h-5" />
+                        <span className="text-xs truncate w-full text-center">{sub.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
         </nav>
       </main>
 
