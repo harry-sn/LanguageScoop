@@ -56,7 +56,167 @@ function useCountdown(targetIso) {
   return `in ${s}s`;
 }
 
-function LoginScreen({ onLogin }) {
+// -------- Landing Page --------
+function LandingPage({ onSignIn }) {
+  const [installEvent, setInstallEvent] = useState(null);
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
+
+  useEffect(() => {
+    const handler = (e) => { e.preventDefault(); setInstallEvent(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const install = async () => {
+    if (installEvent) {
+      installEvent.prompt();
+      const choice = await installEvent.userChoice;
+      if (choice.outcome === 'accepted') toast.success('App installed!');
+      setInstallEvent(null);
+    } else {
+      setShowInstallHelp(true);
+    }
+  };
+
+  const features = [
+    { icon: Video, title: 'One-tap Zoom join', desc: 'Students join classes with a single tap. No more lost meeting links in WhatsApp.' },
+    { icon: CalendarDays, title: 'Recurring schedules', desc: 'Set up weekly recurring classes once. Every future class appears automatically.' },
+    { icon: CheckCircle2, title: 'Attendance & billing', desc: 'One-tap attendance. Fees calculated automatically from billable classes.' },
+    { icon: BookOpen, title: 'Homework & practice', desc: 'Assign homework, create auto-scored MCQ practice, review submissions in one place.' },
+    { icon: Wallet, title: 'Payment tracking', desc: 'Record UPI, cash & bank payments with auto receipt numbers. Print PDF summaries.' },
+    { icon: Brain, title: 'Two portals', desc: 'Teachers manage everything. Students only see their own classes, homework, and fees.' },
+  ];
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-emerald-50">
+      {/* Header */}
+      <header className="sticky top-0 z-10 backdrop-blur-lg bg-white/70 border-b">
+        <div className="max-w-6xl mx-auto flex items-center justify-between p-4">
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-10 rounded-lg bg-white ring-1 ring-slate-200 flex items-center justify-center overflow-hidden">
+              <img src="/logo.png" alt="Language Scoop" className="w-8 h-8 object-contain" />
+            </div>
+            <div className="font-bold text-lg bg-gradient-to-r from-blue-600 to-emerald-600 bg-clip-text text-transparent">Language Scoop</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={install} className="gap-1.5"><Download className="w-4 h-4" />Install App</Button>
+            <Button size="sm" onClick={onSignIn}>Sign in</Button>
+          </div>
+        </div>
+      </header>
+
+      {/* Hero */}
+      <section className="max-w-6xl mx-auto px-4 py-12 md:py-20 text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-medium mb-6">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Built for language tutors and small coaching classes</span>
+        </div>
+        <h1 className="text-4xl md:text-6xl font-bold tracking-tight max-w-3xl mx-auto">
+          <span className="bg-gradient-to-r from-blue-600 via-teal-600 to-emerald-600 bg-clip-text text-transparent">Never miss a class.</span><br />
+          Never lose the Zoom link.
+        </h1>
+        <p className="mt-6 text-lg text-slate-600 max-w-2xl mx-auto">
+          Language Scoop is the modern class-management app for independent tutors. Manage students, schedule classes, share Zoom links, track attendance, assign homework, and calculate monthly fees — all in one place.
+        </p>
+        <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
+          <Button size="lg" onClick={onSignIn} className="gap-2 text-base h-12 px-6">Try the demo <ChevronRight className="w-4 h-4" /></Button>
+          <Button size="lg" variant="outline" onClick={install} className="gap-2 text-base h-12 px-6"><Download className="w-4 h-4" />Install App</Button>
+        </div>
+        <div className="mt-4 text-sm text-slate-500">Demo: <span className="font-mono bg-slate-100 px-2 py-0.5 rounded">teacher@demo.com</span> / <span className="font-mono bg-slate-100 px-2 py-0.5 rounded">demo1234</span></div>
+      </section>
+
+      {/* Features */}
+      <section className="max-w-6xl mx-auto px-4 py-12">
+        <div className="grid md:grid-cols-3 gap-4">
+          {features.map((f, i) => (
+            <Card key={i} className="border-0 shadow-md hover:shadow-lg transition">
+              <CardContent className="p-6">
+                <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-blue-500 to-emerald-500 text-white flex items-center justify-center mb-3">
+                  <f.icon className="w-5 h-5" />
+                </div>
+                <div className="font-semibold text-lg">{f.title}</div>
+                <div className="text-sm text-slate-600 mt-1">{f.desc}</div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      {/* Install PWA CTA */}
+      <section className="max-w-4xl mx-auto px-4 py-12">
+        <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-600 to-emerald-600 text-white overflow-hidden">
+          <CardContent className="p-8 md:p-10">
+            <div className="flex flex-col md:flex-row items-center gap-6">
+              <div className="w-24 h-24 rounded-2xl bg-white/95 flex items-center justify-center flex-shrink-0 shadow-lg">
+                <img src="/logo.png" alt="Language Scoop" className="w-20 h-20 object-contain" />
+              </div>
+              <div className="flex-1 text-center md:text-left">
+                <h2 className="text-2xl md:text-3xl font-bold">Install as an app</h2>
+                <p className="mt-2 text-blue-50">Works on Android, iPhone, tablet, Windows, and Mac. Runs offline. No app store needed.</p>
+                <div className="mt-4 flex gap-2 flex-wrap justify-center md:justify-start">
+                  <Button variant="secondary" size="lg" onClick={install} className="gap-2"><Download className="w-4 h-4" />Install now</Button>
+                  <Button variant="secondary" size="lg" onClick={() => setShowInstallHelp(true)}>How to install</Button>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <footer className="text-center py-8 text-sm text-slate-500">
+        © {new Date().getFullYear()} Language Scoop · Never miss a class · Never lose the Zoom link
+      </footer>
+
+      <Dialog open={showInstallHelp} onOpenChange={setShowInstallHelp}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Install Language Scoop</DialogTitle>
+            <DialogDescription>Add to your device's home screen for a native app-like experience.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 text-sm">
+            <div>
+              <div className="font-semibold flex items-center gap-2 text-primary">📱 iPhone / iPad (Safari)</div>
+              <ol className="list-decimal ml-5 mt-1 space-y-1 text-slate-700">
+                <li>Open this website in <strong>Safari</strong></li>
+                <li>Tap the <strong>Share</strong> icon (square with up arrow)</li>
+                <li>Scroll down and tap <strong>Add to Home Screen</strong></li>
+                <li>Tap <strong>Add</strong> — done!</li>
+              </ol>
+            </div>
+            <Separator />
+            <div>
+              <div className="font-semibold flex items-center gap-2 text-primary">🤖 Android (Chrome)</div>
+              <ol className="list-decimal ml-5 mt-1 space-y-1 text-slate-700">
+                <li>Open this website in <strong>Chrome</strong></li>
+                <li>Tap the <strong>⋮ menu</strong> (top-right)</li>
+                <li>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong></li>
+                <li>Confirm — the app icon appears on your home screen</li>
+              </ol>
+            </div>
+            <Separator />
+            <div>
+              <div className="font-semibold flex items-center gap-2 text-primary">💻 Windows / Mac (Chrome / Edge)</div>
+              <ol className="list-decimal ml-5 mt-1 space-y-1 text-slate-700">
+                <li>Look for the <strong>install icon</strong> (⊕) in the address bar</li>
+                <li>Or click the <strong>⋮ menu</strong> → <strong>Install Language Scoop</strong></li>
+                <li>The app opens in its own window and gets a desktop icon</li>
+              </ol>
+            </div>
+            <div className="p-3 bg-blue-50 rounded text-xs text-blue-900">
+              💡 Once installed, it works like any native app — with icon, splash screen, offline support, and no browser bar.
+            </div>
+          </div>
+          <DialogFooter>
+            {installEvent && <Button onClick={install} className="gap-1.5"><Download className="w-4 h-4" />Install now</Button>}
+            <Button variant="outline" onClick={() => setShowInstallHelp(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function LoginScreen({ onLogin, onBack }) {
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('teacher@demo.com');
   const [password, setPassword] = useState('demo1234');
@@ -88,14 +248,15 @@ function LoginScreen({ onLogin }) {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-slate-50 to-indigo-50 p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary text-primary-foreground mb-3 shadow-lg shadow-primary/30">
-            <GraduationCap className="w-8 h-8" />
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white mb-3 shadow-lg overflow-hidden ring-1 ring-slate-200">
+            <img src="/logo.png" alt="Language Scoop" className="w-16 h-16 object-contain" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">ClasseFlow</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Language Scoop</h1>
           <p className="text-muted-foreground mt-1">Never miss a class, never lose the Zoom link.</p>
         </div>
         <Card className="border-0 shadow-xl">
           <CardHeader>
+            {onBack && <button onClick={onBack} className="text-sm text-primary hover:underline flex items-center gap-1 mb-2"><ChevronLeft className="w-3 h-3" />Back to home</button>}
             <CardTitle>{mode === 'login' ? 'Sign in' : 'Create teacher account'}</CardTitle>
             <CardDescription>{mode === 'login' ? 'Teacher or student portal' : 'For independent tutors'}</CardDescription>
           </CardHeader>
@@ -643,7 +804,7 @@ function BillingPage() {
       const d = await api(`/billing/student/${s.studentId}?month=${m}`);
       const w = window.open('', '_blank');
       const rows = d.classes.map(c => `<tr><td style="padding:6px;border-bottom:1px solid #eee">${new Date(c.startTime).toLocaleDateString('en-IN')}</td><td style="padding:6px;border-bottom:1px solid #eee">${c.topic || 'Class'}</td><td style="padding:6px;border-bottom:1px solid #eee;text-transform:capitalize">${c.status}</td><td style="padding:6px;border-bottom:1px solid #eee;text-align:right">${c.billable ? '₹' + (c.feeSnapshot || 0) : '—'}</td></tr>`).join('');
-      w.document.write(`<html><head><title>Fee Summary - ${d.student.name}</title></head><body style="font-family:system-ui;padding:32px;max-width:700px;margin:auto"><div style="text-align:center;margin-bottom:24px"><h2 style="margin:0;color:#2563EB">${d.teacher.academyName || 'ClasseFlow'}</h2><div style="color:#64748b">Fee Summary · ${m}</div></div><table style="width:100%;margin-bottom:16px"><tr><td><strong>Student:</strong> ${d.student.name}</td><td style="text-align:right"><strong>Level:</strong> ${d.student.level}</td></tr><tr><td><strong>Fee per class:</strong> ₹${d.student.feePerClass}</td><td style="text-align:right"><strong>Month:</strong> ${m}</td></tr></table><h3>Classes</h3><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Date</th><th style="padding:8px;text-align:left">Topic</th><th style="padding:8px;text-align:left">Status</th><th style="padding:8px;text-align:right">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:#94a3b8">No classes</td></tr>'}</tbody></table><div style="margin-top:24px;padding:16px;background:#f0fdf4;border-radius:8px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>Billable classes:</span><span><strong>${d.billable}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Total Due:</span><span><strong>₹${d.totalDue.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Paid:</span><span><strong>₹${d.paid.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:18px;margin-top:8px;padding-top:8px;border-top:1px solid #d1fae5"><span><strong>Balance:</strong></span><span style="color:#059669"><strong>₹${d.balance.toLocaleString('en-IN')}</strong></span></div></div><div style="margin-top:32px;text-align:center;color:#94a3b8;font-size:12px">Generated via ClasseFlow · ${new Date().toLocaleDateString('en-IN')}</div><div style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#2563EB;color:white;border:none;border-radius:6px;cursor:pointer">Print / Save as PDF</button></div></body></html>`);
+      w.document.write(`<html><head><title>Fee Summary - ${d.student.name}</title></head><body style="font-family:system-ui;padding:32px;max-width:700px;margin:auto"><div style="text-align:center;margin-bottom:24px"><h2 style="margin:0;color:#2563EB">${d.teacher.academyName || 'Language Scoop'}</h2><div style="color:#64748b">Fee Summary · ${m}</div></div><table style="width:100%;margin-bottom:16px"><tr><td><strong>Student:</strong> ${d.student.name}</td><td style="text-align:right"><strong>Level:</strong> ${d.student.level}</td></tr><tr><td><strong>Fee per class:</strong> ₹${d.student.feePerClass}</td><td style="text-align:right"><strong>Month:</strong> ${m}</td></tr></table><h3>Classes</h3><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Date</th><th style="padding:8px;text-align:left">Topic</th><th style="padding:8px;text-align:left">Status</th><th style="padding:8px;text-align:right">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:#94a3b8">No classes</td></tr>'}</tbody></table><div style="margin-top:24px;padding:16px;background:#f0fdf4;border-radius:8px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>Billable classes:</span><span><strong>${d.billable}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Total Due:</span><span><strong>₹${d.totalDue.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Paid:</span><span><strong>₹${d.paid.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:18px;margin-top:8px;padding-top:8px;border-top:1px solid #d1fae5"><span><strong>Balance:</strong></span><span style="color:#059669"><strong>₹${d.balance.toLocaleString('en-IN')}</strong></span></div></div><div style="margin-top:32px;text-align:center;color:#94a3b8;font-size:12px">Generated via Language Scoop · ${new Date().toLocaleDateString('en-IN')}</div><div style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#2563EB;color:white;border:none;border-radius:6px;cursor:pointer">Print / Save as PDF</button></div></body></html>`);
       w.document.close();
     } catch (e) { toast.error(e.message); }
   };
@@ -1557,6 +1718,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState('dashboard');
   const [loading, setLoading] = useState(true);
+  const [showLogin, setShowLogin] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('cf_token');
@@ -1568,10 +1730,13 @@ function App() {
     if (user) setView(user.role === 'teacher' ? 'dashboard' : 'home');
   }, [user]);
 
-  const logout = () => { localStorage.clear(); setUser(null); };
+  const logout = () => { localStorage.clear(); setUser(null); setShowLogin(false); };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="text-muted-foreground">Loading ClasseFlow...</div></div>;
-  if (!user) return (<><LoginScreen onLogin={setUser} /><Toaster position="top-center" /></>);
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="text-muted-foreground">Loading Language Scoop...</div></div>;
+  if (!user) {
+    if (!showLogin) return (<><LandingPage onSignIn={() => setShowLogin(true)} /><Toaster position="top-center" /></>);
+    return (<><LoginScreen onLogin={setUser} onBack={() => setShowLogin(false)} /><Toaster position="top-center" /></>);
+  }
 
   const teacherNav = [
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -1618,9 +1783,9 @@ function App() {
     <div className="min-h-screen bg-slate-50 flex">
       <aside className="hidden md:flex w-64 flex-col bg-white border-r p-4">
         <div className="flex items-center gap-2 mb-6 px-2">
-          <div className="w-9 h-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center"><GraduationCap className="w-5 h-5" /></div>
+          <div className="w-9 h-9 rounded-lg bg-white ring-1 ring-slate-200 flex items-center justify-center overflow-hidden"><img src="/logo.png" alt="LS" className="w-7 h-7 object-contain" /></div>
           <div>
-            <div className="font-bold">ClasseFlow</div>
+            <div className="font-bold">Language Scoop</div>
             <div className="text-xs text-muted-foreground capitalize">{user.role}</div>
           </div>
         </div>
@@ -1646,8 +1811,8 @@ function App() {
       <main className="flex-1 flex flex-col min-w-0">
         <header className="md:hidden bg-white border-b p-3 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center"><GraduationCap className="w-4 h-4" /></div>
-            <div className="font-bold">ClasseFlow</div>
+            <div className="w-8 h-8 rounded-lg bg-white ring-1 ring-slate-200 flex items-center justify-center overflow-hidden"><img src="/logo.png" alt="LS" className="w-6 h-6 object-contain" /></div>
+            <div className="font-bold">Language Scoop</div>
           </div>
           <Button variant="ghost" size="sm" onClick={logout}><LogOut className="w-4 h-4" /></Button>
         </header>

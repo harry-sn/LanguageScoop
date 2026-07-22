@@ -1,14 +1,16 @@
 {
-  "name": "ClasseFlow - Tutor & Student Management",
-  "short_name": "ClasseFlow",
+  "name": "Language Scoop - Tutor & Student Management",
+  "short_name": "Language Scoop",
   "description": "Never miss a class, never lose the Zoom link.",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#F8FAFC",
-  "theme_color": "#2563EB",
+  "background_color": "#FFFFFF",
+  "theme_color": "#0F766E",
   "icons": [
-    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }
