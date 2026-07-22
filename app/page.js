@@ -16,7 +16,8 @@ import { toast, Toaster } from 'sonner';
 import {
   LayoutDashboard, Users, CalendarDays, ClipboardList, BookOpen, IndianRupee,
   Video, MapPin, Copy, LogOut, Plus, GraduationCap, Clock,
-  CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send
+  CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send,
+  Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X
 } from 'lucide-react';
 
 const API = '/api';
@@ -379,7 +380,22 @@ function StudentsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold">Students</h1><p className="text-muted-foreground text-sm">{students.length} total</p></div>
-        <Button onClick={() => { setSelected(null); setForm(empty); setShowAdd(true); }} className="gap-1.5"><Plus className="w-4 h-4" />Add Student</Button>
+        <div className="flex gap-2">
+          <input type="file" id="csv-import" accept=".csv" className="hidden" onChange={async (e) => {
+            const file = e.target.files?.[0]; if (!file) return;
+            const text = await file.text();
+            try {
+              const rows = parseCSV(text);
+              const res = await api('/students/import', { method: 'POST', body: { rows } });
+              toast.success(`Imported ${res.created} students`);
+              load();
+            } catch (err) { toast.error(err.message); }
+            e.target.value = '';
+          }} />
+          <Button variant="outline" size="sm" onClick={() => document.getElementById('csv-import').click()} className="gap-1.5"><Upload className="w-4 h-4" />Import CSV</Button>
+          <Button variant="outline" size="sm" onClick={() => downloadCSV('students.csv', students.map(s => ({ name: s.name, email: s.email, phone: s.phone, level: s.level, mode: s.mode, feePerClass: s.feePerClass, permanentMeetingLink: s.permanentMeetingLink, meetingId: s.permanentMeetingId, passcode: s.permanentMeetingPasscode, classroomLocation: s.classroomLocation })))} className="gap-1.5"><Download className="w-4 h-4" />Export</Button>
+          <Button onClick={() => { setSelected(null); setForm(empty); setShowAdd(true); }} className="gap-1.5"><Plus className="w-4 h-4" />Add Student</Button>
+        </div>
       </div>
       {students.length === 0 ? (
         <Card><CardContent className="p-8 text-center text-muted-foreground">No students yet.</CardContent></Card>
@@ -622,6 +638,16 @@ function BillingPage() {
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
+  const printFeeSummary = async (s, m) => {
+    try {
+      const d = await api(`/billing/student/${s.studentId}?month=${m}`);
+      const w = window.open('', '_blank');
+      const rows = d.classes.map(c => `<tr><td style="padding:6px;border-bottom:1px solid #eee">${new Date(c.startTime).toLocaleDateString('en-IN')}</td><td style="padding:6px;border-bottom:1px solid #eee">${c.topic || 'Class'}</td><td style="padding:6px;border-bottom:1px solid #eee;text-transform:capitalize">${c.status}</td><td style="padding:6px;border-bottom:1px solid #eee;text-align:right">${c.billable ? '₹' + (c.feeSnapshot || 0) : '—'}</td></tr>`).join('');
+      w.document.write(`<html><head><title>Fee Summary - ${d.student.name}</title></head><body style="font-family:system-ui;padding:32px;max-width:700px;margin:auto"><div style="text-align:center;margin-bottom:24px"><h2 style="margin:0;color:#2563EB">${d.teacher.academyName || 'ClasseFlow'}</h2><div style="color:#64748b">Fee Summary · ${m}</div></div><table style="width:100%;margin-bottom:16px"><tr><td><strong>Student:</strong> ${d.student.name}</td><td style="text-align:right"><strong>Level:</strong> ${d.student.level}</td></tr><tr><td><strong>Fee per class:</strong> ₹${d.student.feePerClass}</td><td style="text-align:right"><strong>Month:</strong> ${m}</td></tr></table><h3>Classes</h3><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Date</th><th style="padding:8px;text-align:left">Topic</th><th style="padding:8px;text-align:left">Status</th><th style="padding:8px;text-align:right">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:#94a3b8">No classes</td></tr>'}</tbody></table><div style="margin-top:24px;padding:16px;background:#f0fdf4;border-radius:8px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>Billable classes:</span><span><strong>${d.billable}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Total Due:</span><span><strong>₹${d.totalDue.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Paid:</span><span><strong>₹${d.paid.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:18px;margin-top:8px;padding-top:8px;border-top:1px solid #d1fae5"><span><strong>Balance:</strong></span><span style="color:#059669"><strong>₹${d.balance.toLocaleString('en-IN')}</strong></span></div></div><div style="margin-top:32px;text-align:center;color:#94a3b8;font-size:12px">Generated via ClasseFlow · ${new Date().toLocaleDateString('en-IN')}</div><div style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#2563EB;color:white;border:none;border-radius:6px;cursor:pointer">Print / Save as PDF</button></div></body></html>`);
+      w.document.close();
+    } catch (e) { toast.error(e.message); }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -657,6 +683,7 @@ function BillingPage() {
               </div>
               <div className="mt-3 flex gap-2">
                 <Button size="sm" variant="outline" onClick={() => shareWhatsapp(s)} className="gap-1.5"><Send className="w-4 h-4" />Share on WhatsApp</Button>
+                <Button size="sm" variant="outline" onClick={() => printFeeSummary(s, month)} className="gap-1.5"><Printer className="w-4 h-4" />Print / PDF</Button>
               </div>
             </CardContent>
           </Card>
@@ -1031,6 +1058,501 @@ function StudentFees() {
   );
 }
 
+// -------- Practice Exercises (Teacher) --------
+function PracticePage() {
+  const [items, setItems] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [viewing, setViewing] = useState(null);
+  const emptyQ = () => ({ type: 'mcq', text: '', options: ['', '', '', ''], correctAnswer: '', marks: 1, explanation: '' });
+  const empty = { title: '', description: '', level: 'A1', topic: '', studentIds: 'all', dueDate: '', questions: [emptyQ()] };
+  const [form, setForm] = useState(empty);
+
+  const load = async () => {
+    try {
+      const [p, s] = await Promise.all([api('/practice'), api('/students')]);
+      setItems(p.practice); setStudents(s.students);
+    } catch (e) { toast.error(e.message); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const create = async () => {
+    try {
+      const cleanQs = form.questions.filter(q => q.text.trim());
+      if (!cleanQs.length) return toast.error('Add at least one question');
+      await api('/practice', { method: 'POST', body: { ...form, questions: cleanQs } });
+      toast.success('Practice created');
+      setShowAdd(false); setForm(empty); load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const openView = async (p) => {
+    try { const d = await api(`/practice/${p.id}`); setViewing({ ...d.practice, attempts: d.attempts }); } catch (e) { toast.error(e.message); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Practice Exercises</h1>
+        <Button onClick={() => { setForm(empty); setShowAdd(true); }} className="gap-1.5"><Plus className="w-4 h-4" />Create</Button>
+      </div>
+      <div className="grid gap-3">
+        {items.length === 0 ? (
+          <Card><CardContent className="p-8 text-center text-muted-foreground">No practice exercises yet. Create one to test your students.</CardContent></Card>
+        ) : items.map(p => (
+          <Card key={p.id} className="cursor-pointer hover:shadow-md" onClick={() => openView(p)}>
+            <CardContent className="p-4">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <div className="font-semibold">{p.title}</div>
+                  <div className="text-sm text-muted-foreground">{p.topic} · {p.questions.length} question{p.questions.length !== 1 ? 's' : ''}</div>
+                </div>
+                <div className="flex gap-2">
+                  <Badge variant="outline">Level {p.level}</Badge>
+                  <Badge variant="outline">{p.studentIds === 'all' ? 'All students' : `${p.studentIds.length} students`}</Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Create Practice Exercise</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Title</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Verb être - Present Tense" /></div>
+              <div className="space-y-1"><Label>Topic</Label><Input value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="Grammar" /></div>
+              <div className="space-y-1">
+                <Label>Level</Label>
+                <Select value={form.level} onValueChange={(v) => setForm({ ...form, level: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{['A1','A2','B1','B2','C1','C2'].map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1"><Label>Due Date</Label><Input type="datetime-local" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></div>
+            </div>
+            <div className="space-y-1"><Label>Description</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-base">Questions</Label>
+                <Button size="sm" variant="outline" onClick={() => setForm({ ...form, questions: [...form.questions, emptyQ()] })} className="gap-1"><Plus className="w-3 h-3" />Add Question</Button>
+              </div>
+              <div className="space-y-3">
+                {form.questions.map((q, i) => (
+                  <Card key={i} className="border-slate-200">
+                    <CardContent className="p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Select value={q.type} onValueChange={(v) => {
+                          const qs = [...form.questions]; qs[i] = { ...q, type: v, correctAnswer: '' };
+                          if (v === 'truefalse') qs[i].options = ['true', 'false'];
+                          else if (v === 'mcq') qs[i].options = ['', '', '', ''];
+                          else qs[i].options = [];
+                          setForm({ ...form, questions: qs });
+                        }}>
+                          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mcq">Multiple Choice</SelectItem>
+                            <SelectItem value="truefalse">True/False</SelectItem>
+                            <SelectItem value="fill">Fill in Blank</SelectItem>
+                            <SelectItem value="short">Short Answer</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <div className="flex items-center gap-2">
+                          <Input type="number" className="w-16" value={q.marks} onChange={(e) => { const qs = [...form.questions]; qs[i] = { ...q, marks: Number(e.target.value) }; setForm({ ...form, questions: qs }); }} />
+                          <span className="text-xs text-muted-foreground">marks</span>
+                          <Button size="icon" variant="ghost" onClick={() => setForm({ ...form, questions: form.questions.filter((_, j) => j !== i) })}><X className="w-4 h-4" /></Button>
+                        </div>
+                      </div>
+                      <Input value={q.text} onChange={(e) => { const qs = [...form.questions]; qs[i] = { ...q, text: e.target.value }; setForm({ ...form, questions: qs }); }} placeholder={`Question ${i+1}...`} />
+                      {q.type === 'mcq' && (
+                        <div className="space-y-1">
+                          {q.options.map((opt, oi) => (
+                            <div key={oi} className="flex items-center gap-2">
+                              <input type="radio" checked={q.correctAnswer === opt && opt !== ''} onChange={() => { const qs = [...form.questions]; qs[i] = { ...q, correctAnswer: opt }; setForm({ ...form, questions: qs }); }} />
+                              <Input value={opt} onChange={(e) => { const qs = [...form.questions]; const opts = [...q.options]; opts[oi] = e.target.value; qs[i] = { ...q, options: opts, correctAnswer: q.correctAnswer === opt ? e.target.value : q.correctAnswer }; setForm({ ...form, questions: qs }); }} placeholder={`Option ${oi + 1}`} className="flex-1" />
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {q.type === 'truefalse' && (
+                        <Select value={q.correctAnswer} onValueChange={(v) => { const qs = [...form.questions]; qs[i] = { ...q, correctAnswer: v }; setForm({ ...form, questions: qs }); }}>
+                          <SelectTrigger><SelectValue placeholder="Correct answer" /></SelectTrigger>
+                          <SelectContent><SelectItem value="true">True</SelectItem><SelectItem value="false">False</SelectItem></SelectContent>
+                        </Select>
+                      )}
+                      {q.type === 'fill' && (
+                        <Input value={q.correctAnswer} onChange={(e) => { const qs = [...form.questions]; qs[i] = { ...q, correctAnswer: e.target.value }; setForm({ ...form, questions: qs }); }} placeholder="Correct answer (exact match)" />
+                      )}
+                      {q.type === 'short' && (
+                        <div className="text-xs text-muted-foreground italic">Short-answer: no auto-scoring, teacher reviews manually.</div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button onClick={create}>Create</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!viewing} onOpenChange={(o) => { if (!o) setViewing(null); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>{viewing?.title}</DialogTitle><DialogDescription>{viewing?.questions.length} questions · Level {viewing?.level}</DialogDescription></DialogHeader>
+          {viewing && (
+            <div className="space-y-3">
+              <div>
+                <h3 className="font-semibold mb-2">Student Attempts ({viewing.attempts.length})</h3>
+                <div className="space-y-2">
+                  {viewing.attempts.length === 0 ? <div className="text-sm text-muted-foreground">No submissions yet</div> :
+                    viewing.attempts.map(a => {
+                      const stud = students.find(s => s.id === a.studentId);
+                      return (
+                        <Card key={a.id}><CardContent className="p-3 flex items-center justify-between">
+                          <div><div className="font-medium text-sm">{stud?.name || 'Student'}</div><div className="text-xs text-muted-foreground">{fmtDate(a.submittedAt)}</div></div>
+                          <div className="text-right"><div className="font-bold text-lg">{a.score}/{a.maxScore}</div><Badge variant="outline" className="text-xs">{a.status}</Badge></div>
+                        </CardContent></Card>
+                      );
+                    })
+                  }
+                </div>
+              </div>
+              <Separator />
+              <div>
+                <h3 className="font-semibold mb-2">Questions</h3>
+                <div className="space-y-2">
+                  {viewing.questions.map((q, i) => (
+                    <div key={q.id} className="p-3 bg-slate-50 rounded text-sm">
+                      <div className="font-medium">Q{i+1}. {q.text}</div>
+                      {q.options.length > 0 && <div className="mt-1 text-xs">Options: {q.options.join(', ')}</div>}
+                      <div className="mt-1 text-xs text-emerald-700">Answer: {q.correctAnswer || 'Manual review'}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// -------- Practice (Student) --------
+function StudentPractice() {
+  const [items, setItems] = useState([]);
+  const [attempting, setAttempting] = useState(null);
+  const [answers, setAnswers] = useState({});
+
+  const load = async () => { try { const d = await api('/practice'); setItems(d.practice); } catch (e) { toast.error(e.message); } };
+  useEffect(() => { load(); }, []);
+
+  const submit = async () => {
+    try {
+      const res = await api(`/practice/${attempting.id}/submit`, { method: 'POST', body: { answers } });
+      const scoreMsg = res.attempt.autoScored ? `Score: ${res.attempt.score}/${res.attempt.maxScore}` : 'Submitted for review';
+      toast.success(`Submitted! ${scoreMsg}`);
+      setAttempting(null); setAnswers({}); load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-bold">Practice</h1>
+      <div className="grid gap-3">
+        {items.length === 0 ? <Card><CardContent className="p-8 text-center text-muted-foreground">No practice exercises yet. 🎉</CardContent></Card> :
+          items.map(p => (
+            <Card key={p.id} className="cursor-pointer hover:shadow-md" onClick={() => { setAttempting(p); setAnswers({}); }}>
+              <CardContent className="p-4 flex items-start justify-between gap-2">
+                <div>
+                  <div className="font-semibold">{p.title}</div>
+                  <div className="text-sm text-muted-foreground">{p.topic} · {p.questions.length} questions</div>
+                  {p.dueDate && <div className="text-xs text-muted-foreground mt-1">Due {fmtDate(p.dueDate)}</div>}
+                </div>
+                {p.attempt ? (
+                  <div className="text-right">
+                    <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">Done</Badge>
+                    <div className="text-sm font-bold mt-1">{p.attempt.score}/{p.attempt.maxScore}</div>
+                  </div>
+                ) : <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">Start</Badge>}
+              </CardContent>
+            </Card>
+          ))
+        }
+      </div>
+
+      <Dialog open={!!attempting} onOpenChange={(o) => { if (!o) setAttempting(null); }}>
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>{attempting?.title}</DialogTitle><DialogDescription>{attempting?.description}</DialogDescription></DialogHeader>
+          {attempting && (
+            <div className="space-y-4">
+              {attempting.attempt ? (
+                <div className="space-y-3">
+                  <div className="p-4 bg-emerald-50 rounded text-center">
+                    <div className="text-3xl font-bold text-emerald-700">{attempting.attempt.score}/{attempting.attempt.maxScore}</div>
+                    <div className="text-sm text-emerald-700 mt-1">Your score</div>
+                  </div>
+                  {attempting.questions.map((q, i) => {
+                    const r = attempting.attempt.results.find(x => x.questionId === q.id);
+                    const isCorrect = r?.correct;
+                    return (
+                      <div key={q.id} className={`p-3 rounded border ${isCorrect === true ? 'bg-emerald-50 border-emerald-200' : isCorrect === false ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
+                        <div className="font-medium">Q{i+1}. {q.text}</div>
+                        <div className="text-sm mt-1">Your answer: <span className="font-mono">{r?.answer || '—'}</span></div>
+                        {isCorrect === false && <div className="text-sm mt-1">Correct: <span className="font-mono text-emerald-700">{q.correctAnswer}</span></div>}
+                        {q.explanation && <div className="text-xs text-muted-foreground mt-1">{q.explanation}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <>
+                  {attempting.questions.map((q, i) => (
+                    <div key={q.id} className="space-y-2">
+                      <div className="font-medium">Q{i+1}. {q.text} <span className="text-xs text-muted-foreground">({q.marks} mark{q.marks !== 1 ? 's' : ''})</span></div>
+                      {q.type === 'mcq' && q.options.map((opt, oi) => (
+                        <label key={oi} className={`flex items-center gap-2 p-2 rounded border cursor-pointer hover:bg-slate-50 ${answers[q.id] === opt ? 'border-primary bg-blue-50' : ''}`}>
+                          <input type="radio" name={q.id} checked={answers[q.id] === opt} onChange={() => setAnswers({ ...answers, [q.id]: opt })} />
+                          <span>{opt}</span>
+                        </label>
+                      ))}
+                      {q.type === 'truefalse' && (
+                        <div className="flex gap-2">
+                          {['true', 'false'].map(v => (
+                            <button key={v} onClick={() => setAnswers({ ...answers, [q.id]: v })} className={`flex-1 p-2 rounded border capitalize ${answers[q.id] === v ? 'border-primary bg-blue-50' : ''}`}>{v}</button>
+                          ))}
+                        </div>
+                      )}
+                      {q.type === 'fill' && <Input value={answers[q.id] || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} placeholder="Type your answer..." />}
+                      {q.type === 'short' && <Textarea value={answers[q.id] || ''} onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })} rows={3} />}
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAttempting(null)}>Close</Button>
+            {attempting && !attempting.attempt && <Button onClick={submit} disabled={Object.keys(answers).length === 0}>Submit</Button>}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// -------- Payments (Teacher) --------
+function PaymentsPage() {
+  const [payments, setPayments] = useState([]);
+  const [students, setStudents] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const now = new Date();
+  const empty = { studentId: '', amount: '', month: `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`, method: 'upi', transactionRef: '', notes: '', paymentDate: new Date().toISOString().slice(0,16) };
+  const [form, setForm] = useState(empty);
+
+  const load = async () => {
+    try {
+      const [p, s] = await Promise.all([api('/payments'), api('/students')]);
+      setPayments(p.payments); setStudents(s.students);
+    } catch (e) { toast.error(e.message); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const create = async () => {
+    try { await api('/payments', { method: 'POST', body: form }); toast.success('Payment recorded'); setShowAdd(false); setForm(empty); load(); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  const del = async (id) => {
+    if (!confirm('Delete this payment?')) return;
+    try { await api(`/payments/${id}`, { method: 'DELETE' }); toast.success('Deleted'); load(); } catch (e) { toast.error(e.message); }
+  };
+
+  const monthTotal = payments.filter(p => p.month === form.month).reduce((s, p) => s + p.amount, 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div><h1 className="text-2xl font-bold">Payments</h1><p className="text-muted-foreground text-sm">Record and track payments received</p></div>
+        <Button onClick={() => { setForm(empty); setShowAdd(true); }} className="gap-1.5"><Plus className="w-4 h-4" />Record Payment</Button>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground uppercase">Total Received</p><p className="text-2xl font-bold text-emerald-600 mt-1">{fmtMoney(payments.reduce((s, p) => s + p.amount, 0))}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground uppercase">This Month</p><p className="text-2xl font-bold mt-1">{fmtMoney(monthTotal)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground uppercase">Total Payments</p><p className="text-2xl font-bold mt-1">{payments.length}</p></CardContent></Card>
+      </div>
+
+      <div className="grid gap-2">
+        {payments.length === 0 ? <Card><CardContent className="p-8 text-center text-muted-foreground">No payments recorded yet.</CardContent></Card> : payments.map(p => (
+          <Card key={p.id}><CardContent className="p-4 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3">
+              <Avatar><AvatarFallback className="bg-primary/10 text-primary">{initials(p.studentName)}</AvatarFallback></Avatar>
+              <div>
+                <div className="font-semibold">{p.studentName}</div>
+                <div className="text-xs text-muted-foreground">{p.month} · {p.method.toUpperCase()}{p.transactionRef && ` · ${p.transactionRef}`}</div>
+                <div className="text-xs text-muted-foreground">Receipt {p.receiptNumber} · {new Date(p.paymentDate).toLocaleDateString('en-IN')}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="text-right"><div className="text-lg font-bold text-emerald-600">{fmtMoney(p.amount)}</div></div>
+              <Button size="icon" variant="ghost" onClick={() => del(p.id)}><Trash2 className="w-4 h-4" /></Button>
+            </div>
+          </CardContent></Card>
+        ))}
+      </div>
+
+      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Record Payment</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>Student</Label>
+              <Select value={form.studentId} onValueChange={(v) => setForm({ ...form, studentId: v })}>
+                <SelectTrigger><SelectValue placeholder="Choose student" /></SelectTrigger>
+                <SelectContent>{students.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Amount (₹)</Label><Input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: Number(e.target.value) })} /></div>
+              <div className="space-y-1"><Label>For Month</Label><Input type="month" value={form.month} onChange={(e) => setForm({ ...form, month: e.target.value })} /></div>
+              <div className="space-y-1">
+                <Label>Method</Label>
+                <Select value={form.method} onValueChange={(v) => setForm({ ...form, method: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="upi">UPI</SelectItem>
+                    <SelectItem value="bank">Bank Transfer</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1"><Label>Payment Date</Label><Input type="datetime-local" value={form.paymentDate} onChange={(e) => setForm({ ...form, paymentDate: e.target.value })} /></div>
+            </div>
+            <div className="space-y-1"><Label>Transaction Ref (optional)</Label><Input value={form.transactionRef} onChange={(e) => setForm({ ...form, transactionRef: e.target.value })} placeholder="UPI ID, cheque number..." /></div>
+            <div className="space-y-1"><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button onClick={create} disabled={!form.studentId || !form.amount}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// -------- Calendar (Teacher) --------
+function CalendarPage() {
+  const [classes, setClasses] = useState([]);
+  const [cursor, setCursor] = useState(new Date());
+  const [selectedDay, setSelectedDay] = useState(null);
+
+  useEffect(() => { api('/classes').then(d => setClasses(d.classes)).catch(e => toast.error(e.message)); }, []);
+
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+  const first = new Date(year, month, 1);
+  const startDay = first.getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [];
+  for (let i = 0; i < startDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
+
+  const classesOn = (d) => classes.filter(c => {
+    const s = new Date(c.startTime);
+    return d && s.getFullYear() === d.getFullYear() && s.getMonth() === d.getMonth() && s.getDate() === d.getDate();
+  });
+
+  const monthLabel = cursor.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h1 className="text-2xl font-bold">Calendar</h1>
+        <div className="flex items-center gap-2">
+          <Button size="icon" variant="outline" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
+          <div className="font-semibold min-w-[140px] text-center">{monthLabel}</div>
+          <Button size="icon" variant="outline" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
+          <Button variant="outline" size="sm" onClick={() => setCursor(new Date())}>Today</Button>
+        </div>
+      </div>
+      <Card><CardContent className="p-2 md:p-4">
+        <div className="grid grid-cols-7 gap-1 text-xs text-center text-muted-foreground mb-2 font-medium">
+          {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d}>{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-1">
+          {cells.map((d, i) => {
+            const onCells = d ? classesOn(d) : [];
+            const isToday = d && d.toDateString() === new Date().toDateString();
+            return (
+              <button key={i} disabled={!d} onClick={() => d && setSelectedDay(d)} className={`aspect-square md:aspect-[4/3] p-1 md:p-2 rounded-md border text-left overflow-hidden transition ${!d ? 'invisible' : 'hover:border-primary'} ${isToday ? 'border-primary bg-blue-50' : 'border-slate-200'}`}>
+                <div className={`text-sm ${isToday ? 'font-bold text-primary' : ''}`}>{d?.getDate()}</div>
+                <div className="mt-1 space-y-0.5">
+                  {onCells.slice(0, 2).map(c => (
+                    <div key={c.id} className={`text-[10px] md:text-xs px-1 py-0.5 rounded truncate ${c.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : c.status === 'absent' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'}`}>
+                      {fmtTime(c.startTime)} {c.studentName.split(' ')[0]}
+                    </div>
+                  ))}
+                  {onCells.length > 2 && <div className="text-[10px] text-muted-foreground">+{onCells.length - 2} more</div>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </CardContent></Card>
+
+      <Dialog open={!!selectedDay} onOpenChange={(o) => { if (!o) setSelectedDay(null); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>{selectedDay && fmtDateLong(selectedDay.toISOString())}</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            {selectedDay && classesOn(selectedDay).length === 0 ? <div className="text-center py-6 text-muted-foreground">No classes this day</div> :
+              selectedDay && classesOn(selectedDay).map(c => <ClassCard key={c.id} cls={c} />)
+            }
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// -------- CSV utils --------
+function downloadCSV(filename, rows) {
+  if (!rows.length) return;
+  const cols = Object.keys(rows[0]);
+  const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = [cols.join(','), ...rows.map(r => cols.map(c => escape(r[c])).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const header = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+  return lines.slice(1).map(l => {
+    const cells = []; let cur = ''; let inQ = false;
+    for (const ch of l) {
+      if (ch === '"') inQ = !inQ;
+      else if (ch === ',' && !inQ) { cells.push(cur); cur = ''; }
+      else cur += ch;
+    }
+    cells.push(cur);
+    const obj = {}; header.forEach((h, i) => { obj[h] = (cells[i] || '').replace(/^"|"$/g, ''); });
+    return obj;
+  });
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [view, setView] = useState('dashboard');
@@ -1053,15 +1575,19 @@ function App() {
 
   const teacherNav = [
     { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { key: 'classes', label: 'Classes', icon: CalendarDays },
+    { key: 'calendar', label: 'Calendar', icon: CalendarDays },
+    { key: 'classes', label: 'Classes', icon: ClipboardList },
     { key: 'students', label: 'Students', icon: Users },
     { key: 'homework', label: 'Homework', icon: BookOpen },
+    { key: 'practice', label: 'Practice', icon: Brain },
     { key: 'billing', label: 'Billing', icon: IndianRupee },
+    { key: 'payments', label: 'Payments', icon: Wallet },
   ];
   const studentNav = [
     { key: 'home', label: 'Home', icon: Home },
     { key: 'classes', label: 'Classes', icon: CalendarDays },
     { key: 'homework', label: 'Homework', icon: BookOpen },
+    { key: 'practice', label: 'Practice', icon: Brain },
     { key: 'attendance', label: 'Attendance', icon: ClipboardList },
     { key: 'fees', label: 'Fees', icon: IndianRupee },
   ];
@@ -1070,14 +1596,18 @@ function App() {
   const renderView = () => {
     if (user.role === 'teacher') {
       if (view === 'dashboard') return <TeacherDashboard onNavigate={setView} />;
+      if (view === 'calendar') return <CalendarPage />;
       if (view === 'students') return <StudentsPage />;
       if (view === 'classes') return <ClassesPage />;
       if (view === 'homework') return <HomeworkPage />;
+      if (view === 'practice') return <PracticePage />;
       if (view === 'billing') return <BillingPage />;
+      if (view === 'payments') return <PaymentsPage />;
     } else {
       if (view === 'home') return <StudentHome onNavigate={setView} />;
       if (view === 'classes') return <StudentClasses />;
       if (view === 'homework') return <StudentHomework />;
+      if (view === 'practice') return <StudentPractice />;
       if (view === 'attendance') return <StudentAttendance />;
       if (view === 'fees') return <StudentFees />;
     }
@@ -1127,8 +1657,8 @@ function App() {
         </div>
 
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t z-20">
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${nav.length}, 1fr)` }}>
-            {nav.map(n => (
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${Math.min(nav.length, 5)}, 1fr)` }}>
+            {nav.slice(0, 5).map(n => (
               <button key={n.key} onClick={() => setView(n.key)} className={`flex flex-col items-center gap-1 py-2 text-xs ${view === n.key ? 'text-primary' : 'text-slate-500'}`}>
                 <n.icon className="w-5 h-5" />
                 <span>{n.label}</span>

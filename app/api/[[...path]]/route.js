@@ -185,11 +185,12 @@ async function ensureSeed() {
 }
 
 // ------------- Route Handlers ----------------
-async function handle(request, { params }) {
+async function handle(request, context) {
   const database = await getDb();
   await ensureSeed();
 
   const method = request.method;
+  const params = await context.params;
   const pathParts = (params?.path || []);
   const route = pathParts.join('/');
   const url = new URL(request.url);
@@ -557,6 +558,200 @@ async function handle(request, { params }) {
       await database.collection('homework').updateOne({ id }, { $set: { feedback: body.feedback || '', score: body.score ?? null, status: 'reviewed' } });
       const updated = await database.collection('homework').findOne({ id });
       return json({ homework: updated });
+    }
+
+    // ---- PRACTICE EXERCISES ----
+    if (route === 'practice' && method === 'GET') {
+      let filter = {};
+      if (user.role === 'teacher') filter.teacherId = user.id;
+      else {
+        const student = await database.collection('students').findOne({ userId: user.id });
+        if (!student) return json({ practice: [] });
+        filter.$or = [{ studentIds: student.id }, { studentIds: 'all' }];
+        filter.teacherId = student.teacherId;
+      }
+      const practice = await database.collection('practice').find(filter).sort({ createdAt: -1 }).toArray();
+      if (user.role === 'student') {
+        const student = await database.collection('students').findOne({ userId: user.id });
+        for (const p of practice) {
+          const attempt = await database.collection('practice_attempts').findOne({ practiceId: p.id, studentId: student.id });
+          p.attempt = attempt;
+        }
+      }
+      return json({ practice });
+    }
+
+    if (route === 'practice' && method === 'POST') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const b = body;
+      const doc = {
+        id: uuidv4(),
+        teacherId: user.id,
+        title: b.title || '',
+        description: b.description || '',
+        level: b.level || 'A1',
+        topic: b.topic || '',
+        studentIds: b.studentIds || 'all',
+        questions: (b.questions || []).map(q => ({
+          id: uuidv4(),
+          type: q.type,
+          text: q.text,
+          options: q.options || [],
+          correctAnswer: q.correctAnswer,
+          marks: Number(q.marks) || 1,
+          explanation: q.explanation || '',
+        })),
+        dueDate: b.dueDate ? new Date(b.dueDate).toISOString() : null,
+        createdAt: new Date().toISOString(),
+      };
+      await database.collection('practice').insertOne(doc);
+      return json({ practice: doc });
+    }
+
+    if (route.startsWith('practice/') && pathParts[2] === 'submit' && method === 'POST') {
+      if (user.role !== 'student') return json({ error: 'Forbidden' }, 403);
+      const id = pathParts[1];
+      const student = await database.collection('students').findOne({ userId: user.id });
+      const p = await database.collection('practice').findOne({ id });
+      if (!p) return json({ error: 'Not found' }, 404);
+      const answers = body.answers || {};
+      let score = 0, maxScore = 0, autoScored = true;
+      const results = [];
+      for (const q of p.questions) {
+        maxScore += q.marks;
+        const ans = answers[q.id];
+        let correct = null;
+        if (['mcq','truefalse','fill'].includes(q.type)) {
+          const a = (ans || '').toString().trim().toLowerCase();
+          const c = (q.correctAnswer || '').toString().trim().toLowerCase();
+          correct = a === c;
+          if (correct) score += q.marks;
+        } else {
+          autoScored = false;
+        }
+        results.push({ questionId: q.id, answer: ans, correct });
+      }
+      const attemptDoc = {
+        id: uuidv4(),
+        practiceId: p.id,
+        studentId: student.id,
+        teacherId: p.teacherId,
+        answers, results, score, maxScore, autoScored,
+        status: autoScored ? 'reviewed' : 'submitted',
+        submittedAt: new Date().toISOString(),
+      };
+      await database.collection('practice_attempts').replaceOne({ practiceId: p.id, studentId: student.id }, attemptDoc, { upsert: true });
+      return json({ attempt: attemptDoc });
+    }
+
+    if (route.startsWith('practice/') && pathParts.length === 2 && method === 'GET') {
+      const id = pathParts[1];
+      const p = await database.collection('practice').findOne({ id });
+      if (!p) return json({ error: 'Not found' }, 404);
+      const attempts = await database.collection('practice_attempts').find({ practiceId: id }).toArray();
+      return json({ practice: p, attempts });
+    }
+
+    // ---- PAYMENTS ----
+    if (route === 'payments' && method === 'GET') {
+      let filter = {};
+      if (user.role === 'teacher') filter.teacherId = user.id;
+      else {
+        const student = await database.collection('students').findOne({ userId: user.id });
+        if (!student) return json({ payments: [] });
+        filter.studentId = student.id;
+      }
+      const payments = await database.collection('payments').find(filter).sort({ paymentDate: -1 }).toArray();
+      return json({ payments });
+    }
+
+    if (route === 'payments' && method === 'POST') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const b = body;
+      const student = await database.collection('students').findOne({ id: b.studentId, teacherId: user.id });
+      if (!student) return json({ error: 'Student not found' }, 404);
+      const count = await database.collection('payments').countDocuments({ teacherId: user.id });
+      const doc = {
+        id: uuidv4(),
+        teacherId: user.id,
+        studentId: student.id,
+        studentName: student.name,
+        month: b.month || `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`,
+        amount: Number(b.amount) || 0,
+        paymentDate: b.paymentDate || new Date().toISOString(),
+        method: b.method || 'cash',
+        transactionRef: b.transactionRef || '',
+        receiptNumber: `RCP-${String(count + 1).padStart(4, '0')}`,
+        notes: b.notes || '',
+        createdAt: new Date().toISOString(),
+      };
+      await database.collection('payments').insertOne(doc);
+      return json({ payment: doc });
+    }
+
+    if (route.startsWith('payments/') && method === 'DELETE') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const id = pathParts[1];
+      await database.collection('payments').deleteOne({ id, teacherId: user.id });
+      return json({ ok: true });
+    }
+
+    // ---- CSV IMPORT ----
+    if (route === 'students/import' && method === 'POST') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const rows = body.rows || [];
+      const created = [];
+      for (const r of rows) {
+        if (!r.name) continue;
+        const doc = {
+          id: uuidv4(), userId: null, teacherId: user.id,
+          name: r.name, email: r.email || '', phone: r.phone || '',
+          parentName: r.parentName || '', parentPhone: r.parentPhone || '',
+          level: r.level || 'A1', mode: r.mode || 'online', classType: 'individual',
+          feePerClass: Number(r.feePerClass) || 0, defaultDuration: 60,
+          permanentMeetingLink: r.permanentMeetingLink || '',
+          permanentMeetingPlatform: detectPlatform(r.permanentMeetingLink) || '',
+          permanentMeetingId: r.meetingId || '', permanentMeetingPasscode: r.passcode || '',
+          classroomLocation: r.classroomLocation || '',
+          joiningDate: new Date().toISOString(), status: 'active', notes: '',
+          createdAt: new Date().toISOString(),
+        };
+        if (r.email) {
+          const existingU = await database.collection('users').findOne({ email: r.email });
+          if (!existingU) {
+            const sUserId = uuidv4();
+            const hashed = await bcrypt.hash('demo1234', 10);
+            await database.collection('users').insertOne({ id: sUserId, email: r.email, password: hashed, role: 'student', name: r.name, teacherId: user.id, createdAt: new Date().toISOString() });
+            doc.userId = sUserId;
+          }
+        }
+        await database.collection('students').insertOne(doc);
+        created.push(doc);
+      }
+      return json({ created: created.length, students: created });
+    }
+
+    // ---- MONTHLY SUMMARY (for PDF) ----
+    if (route.startsWith('billing/student/') && method === 'GET') {
+      const sid = pathParts[2];
+      const monthParam = url.searchParams.get('month');
+      const now = new Date();
+      const y = monthParam ? Number(monthParam.split('-')[0]) : now.getFullYear();
+      const m = monthParam ? Number(monthParam.split('-')[1]) - 1 : now.getMonth();
+      const start = new Date(y, m, 1).toISOString();
+      const end = new Date(y, m + 1, 1).toISOString();
+      const student = await database.collection('students').findOne({ id: sid });
+      if (!student) return json({ error: 'Not found' }, 404);
+      if (user.role === 'teacher' && student.teacherId !== user.id) return json({ error: 'Forbidden' }, 403);
+      if (user.role === 'student' && student.userId !== user.id) return json({ error: 'Forbidden' }, 403);
+      const classes = await database.collection('classes').find({ studentId: sid, startTime: { $gte: start, $lt: end } }).sort({ startTime: 1 }).toArray();
+      const monthStr = `${y}-${String(m+1).padStart(2,'0')}`;
+      const payments = await database.collection('payments').find({ studentId: sid, month: monthStr }).toArray();
+      const teacher = await database.collection('users').findOne({ id: student.teacherId });
+      const billable = classes.filter(c => c.billable).length;
+      const totalDue = billable * (student.feePerClass || 0);
+      const paid = payments.reduce((s, p) => s + p.amount, 0);
+      return json({ student, teacher: { name: teacher?.name, academyName: teacher?.academyName }, month: monthStr, classes, payments, billable, totalDue, paid, balance: totalDue - paid });
     }
 
     // ---- DASHBOARD (teacher) ----
