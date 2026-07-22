@@ -805,6 +805,8 @@ function RenewPackDialog({ student, open, onClose, onDone }) {
       </DialogContent>
     </Dialog>
   );
+}
+
 function ResetPasswordDialog({ student, open, onClose }) {
   const [newPassword, setNewPassword] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1456,6 +1458,8 @@ function HomeworkPage() {
               <div className="p-3 bg-slate-50 rounded text-sm">{review.submissionText || <em>No text submission</em>}</div>
               <div className="space-y-1"><Label>Feedback</Label><Textarea value={review.feedback} onChange={(e) => setReview({ ...review, feedback: e.target.value })} rows={4} /></div>
               <div className="space-y-1"><Label>Score (optional)</Label><Input type="number" value={review.score ?? ''} onChange={(e) => setReview({ ...review, score: e.target.value ? Number(e.target.value) : null })} /></div>
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setReview(null)}>Cancel</Button>
             <Button onClick={submitReview}>Save Review</Button>
