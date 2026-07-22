@@ -33,9 +33,9 @@ async function api(path, opts = {}) {
   return data;
 }
 
-const fmtTime = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true });
-const fmtDate = (iso) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
-const fmtDateLong = (iso) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
+const fmtDate = (iso) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
+const fmtDateLong = (iso) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
 const fmtMoney = (n) => `₹${(n || 0).toLocaleString('en-IN')}`;
 const initials = (name = '') => name.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
 
@@ -1116,7 +1116,11 @@ function ClassesPage() {
 
   const create = async () => {
     try {
-      const d = await api('/classes', { method: 'POST', body: form });
+      const payload = { ...form };
+      if (!payload.recurring && payload.startTime) {
+        payload.startTime = new Date(payload.startTime).toISOString();
+      }
+      const d = await api('/classes', { method: 'POST', body: payload });
       toast.success(`Created ${d.classes.length} class${d.classes.length > 1 ? 'es' : ''}`);
       setShowAdd(false); setForm(empty); load();
     } catch (e) { toast.error(e.message); }

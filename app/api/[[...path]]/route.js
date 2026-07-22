@@ -990,18 +990,24 @@ async function handle(request, context) {
 
       const startTimes = [];
       if (b.recurring && Array.isArray(b.recurringDays) && b.recurringDays.length > 0) {
-        const start = new Date(b.startDate);
+        const start = new Date(b.startDate || new Date().toISOString().split('T')[0]);
         const end = new Date(b.endDate || new Date(start.getTime() + 90 * 24 * 3600 * 1000));
-        const [hh, mm] = (b.time || '17:00').split(':').map(Number);
+        const timeStr = b.time || '17:00';
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
           if (b.recurringDays.includes(d.getDay())) {
-            const occ = new Date(d);
-            occ.setHours(hh, mm, 0, 0);
-            startTimes.push(new Date(occ));
+            const dateStr = d.toISOString().split('T')[0];
+            const occ = new Date(`${dateStr}T${timeStr}:00+05:30`);
+            startTimes.push(occ);
           }
         }
-      } else {
-        startTimes.push(new Date(b.startTime));
+      } else if (b.startTime) {
+        let st;
+        if (typeof b.startTime === 'string' && !b.startTime.includes('Z') && !b.startTime.includes('+')) {
+          st = new Date(`${b.startTime}:00+05:30`);
+        } else {
+          st = new Date(b.startTime);
+        }
+        startTimes.push(st);
       }
 
       const duration = Number(b.duration) || student.defaultDuration || 60;
