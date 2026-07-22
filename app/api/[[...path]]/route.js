@@ -77,6 +77,206 @@ function signToken(userId, role) {
 }
 
 // ---------- Seed demo data ----------
+// ---------- PACK & ATTENDANCE HELPERS ----------
+
+const ATTENDANCE_RULES = {
+  present: { countCompleted: true, deductPack: true },
+  student_no_show: { countCompleted: true, deductPack: true },
+  student_cancelled_late: { countCompleted: true, deductPack: true },
+  student_cancelled_on_time: { countCompleted: false, deductPack: false },
+  teacher_cancelled: { countCompleted: false, deductPack: false },
+  rescheduled: { countCompleted: false, deductPack: false },
+  trial: { countCompleted: true, deductPack: false },
+  complimentary: { countCompleted: true, deductPack: false },
+  pending: { countCompleted: false, deductPack: false },
+  completed: { countCompleted: true, deductPack: true },
+  absent: { countCompleted: false, deductPack: false },
+  cancelled: { countCompleted: false, deductPack: false },
+};
+
+function getAttendanceRules(status) {
+  return ATTENDANCE_RULES[status] || { countCompleted: false, deductPack: false };
+}
+
+function getKolkataMonthRange(monthParam) {
+  const now = new Date();
+  let y = now.getFullYear();
+  let m = now.getMonth();
+  if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+    const parts = monthParam.split('-');
+    y = parseInt(parts[0], 10);
+    m = parseInt(parts[1], 10) - 1;
+  }
+  const startUTC = new Date(Date.UTC(y, m, 1, 0, 0, 0) - (5.5 * 60 * 60 * 1000));
+  const endUTC = new Date(Date.UTC(y, m + 1, 1, 0, 0, 0) - (5.5 * 60 * 60 * 1000));
+  return {
+    monthStr: `${y}-${String(m + 1).padStart(2, '0')}`,
+    startISO: startUTC.toISOString(),
+    endISO: endUTC.toISOString(),
+  };
+}
+
+async function recalculatePackState(database, packId) {
+  if (!packId) return null;
+  const pack = await database.collection('classPacks').findOne({ id: packId });
+  if (!pack) return null;
+
+  const txns = await database.collection('packTransactions').find({ packId }).toArray();
+  const usedClasses = txns.reduce((sum, t) => sum + (t.quantity || 0), 0);
+  const remainingClasses = Math.max(0, pack.totalClasses - usedClasses);
+  
+  let newStatus = pack.status;
+  let completedAt = pack.completedAt;
+  if (usedClasses >= pack.totalClasses && pack.status === 'active') {
+    newStatus = 'completed';
+    completedAt = new Date().toISOString();
+  }
+
+  await database.collection('classPacks').updateOne(
+    { id: packId },
+    {
+      $set: {
+        usedClasses,
+        remainingClasses,
+        status: newStatus,
+        completedAt,
+        updatedAt: new Date().toISOString(),
+      }
+    }
+  );
+
+  return await database.collection('classPacks').findOne({ id: packId });
+}
+
+async function processAttendanceDeduction(database, cls, newStatus, isBillableOverride, userId) {
+  const rules = getAttendanceRules(newStatus);
+  const shouldDeduct = isBillableOverride !== undefined ? Boolean(isBillableOverride) : rules.deductPack;
+
+  const student = await database.collection('students').findOne({ id: cls.studentId });
+  if (!student) return cls;
+
+  const existingDeduction = await database.collection('packTransactions').findOne({
+    classId: cls.id,
+    type: 'deduction'
+  });
+  const existingReversal = await database.collection('packTransactions').findOne({
+    classId: cls.id,
+    type: 'reversal'
+  });
+
+  let activePack = null;
+  if (student.activePackId) {
+    activePack = await database.collection('classPacks').findOne({ id: student.activePackId });
+  }
+
+  if (shouldDeduct) {
+    if (existingDeduction && !existingReversal) {
+      await database.collection('classes').updateOne(
+        { id: cls.id },
+        { $set: { status: newStatus, isBillable: true, attendanceFinalisedAt: new Date().toISOString() } }
+      );
+      return await database.collection('classes').findOne({ id: cls.id });
+    }
+
+    if (!activePack || activePack.status !== 'active' || activePack.remainingClasses <= 0) {
+      await database.collection('classes').updateOne(
+        { id: cls.id },
+        {
+          $set: {
+            status: newStatus,
+            isBillable: true,
+            packId: null,
+            packTransactionId: null,
+            requiresPackResolution: true,
+            attendanceFinalisedAt: new Date().toISOString()
+          }
+        }
+      );
+      return await database.collection('classes').findOne({ id: cls.id });
+    }
+
+    const txnId = uuidv4();
+    const txn = {
+      id: txnId,
+      packId: activePack.id,
+      studentId: student.id,
+      classId: cls.id,
+      type: 'deduction',
+      quantity: 1,
+      reason: `Class attendance: ${newStatus}`,
+      attendanceStatus: newStatus,
+      idempotencyKey: `${cls.id}-deduction`,
+      createdBy: userId || activePack.teacherId,
+      createdAt: new Date().toISOString()
+    };
+    await database.collection('packTransactions').insertOne(txn);
+
+    await database.collection('classes').updateOne(
+      { id: cls.id },
+      {
+        $set: {
+          status: newStatus,
+          isBillable: true,
+          packId: activePack.id,
+          packTransactionId: txnId,
+          requiresPackResolution: false,
+          attendanceFinalisedAt: new Date().toISOString()
+        }
+      }
+    );
+
+    await recalculatePackState(database, activePack.id);
+  } else {
+    if (existingDeduction && !existingReversal) {
+      const revTxnId = uuidv4();
+      const revTxn = {
+        id: revTxnId,
+        packId: existingDeduction.packId,
+        studentId: student.id,
+        classId: cls.id,
+        type: 'reversal',
+        quantity: -1,
+        reason: `Reversal: attendance updated to ${newStatus}`,
+        attendanceStatus: newStatus,
+        idempotencyKey: `${cls.id}-reversal`,
+        createdBy: userId || cls.teacherId,
+        createdAt: new Date().toISOString()
+      };
+      await database.collection('packTransactions').insertOne(revTxn);
+
+      await database.collection('classes').updateOne(
+        { id: cls.id },
+        {
+          $set: {
+            status: newStatus,
+            isBillable: false,
+            packId: null,
+            packTransactionId: null,
+            requiresPackResolution: false,
+            attendanceFinalisedAt: new Date().toISOString()
+          }
+        }
+      );
+
+      await recalculatePackState(database, existingDeduction.packId);
+    } else {
+      await database.collection('classes').updateOne(
+        { id: cls.id },
+        {
+          $set: {
+            status: newStatus,
+            isBillable: false,
+            attendanceFinalisedAt: new Date().toISOString()
+          }
+        }
+      );
+    }
+  }
+
+  return await database.collection('classes').findOne({ id: cls.id });
+}
+
+// ---------- Seed demo data ----------
 async function ensureSeed() {
   const database = await getDb();
   const existing = await database.collection('users').findOne({ email: 'teacher@demo.com' });
@@ -114,8 +314,14 @@ async function ensureSeed() {
       teacherId,
       createdAt: new Date().toISOString(),
     });
+
+    const packId = uuidv4();
+    const studentId = uuidv4();
+    const totalClasses = 8;
+    const totalAmount = s.feePerClass * totalClasses;
+
     const studentDoc = {
-      id: uuidv4(),
+      id: studentId,
       userId: sId,
       teacherId,
       name: s.name,
@@ -127,6 +333,9 @@ async function ensureSeed() {
       mode: s.mode,
       classType: 'individual',
       feePerClass: s.feePerClass,
+      defaultPackSize: totalClasses,
+      activePackId: packId,
+      timezone: 'Asia/Kolkata',
       defaultDuration: 60,
       permanentMeetingLink: s.mode !== 'offline' ? 'https://zoom.us/j/1234567890?pwd=demoPass' : '',
       permanentMeetingPlatform: s.mode !== 'offline' ? 'zoom' : '',
@@ -140,6 +349,45 @@ async function ensureSeed() {
     };
     await database.collection('students').insertOne(studentDoc);
     studentDocs.push(studentDoc);
+
+    // Create active class pack
+    await database.collection('classPacks').insertOne({
+      id: packId,
+      teacherId,
+      studentId: studentDoc.id,
+      totalClasses,
+      usedClasses: 0,
+      remainingClasses: totalClasses,
+      feePerClassSnapshot: s.feePerClass,
+      totalAmount,
+      paidAmount: totalAmount,
+      status: 'active',
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    // Record advance payment
+    const paymentCount = await database.collection('payments').countDocuments({ teacherId });
+    await database.collection('payments').insertOne({
+      id: uuidv4(),
+      teacherId,
+      studentId: studentDoc.id,
+      studentName: s.name,
+      packId,
+      amount: totalAmount,
+      currency: 'INR',
+      paymentDate: new Date().toISOString(),
+      paymentMethod: 'upi',
+      reference: `TXN-${Math.floor(100000 + Math.random() * 900000)}`,
+      receiptNumber: `RCP-${String(paymentCount + 1).padStart(4, '0')}`,
+      status: 'paid',
+      notes: 'Initial advance pack payment',
+      createdBy: teacherId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   // Create classes: today + next few days
@@ -159,12 +407,13 @@ async function ensureSeed() {
   ];
   // Past classes
   const pastSeed = [
-    { student: studentDocs[0], start: mkDate(-2, 17), topic: 'Alphabet Français', status: 'completed', billable: true },
-    { student: studentDocs[0], start: mkDate(-5, 17), topic: 'Introduction', status: 'completed', billable: true },
-    { student: studentDocs[1], start: mkDate(-3, 14), topic: 'Basic Vocabulary', status: 'completed', billable: true },
-    { student: studentDocs[2], start: mkDate(-4, 17), topic: 'Grammar Basics', status: 'completed', billable: true },
+    { student: studentDocs[0], start: mkDate(-2, 17), topic: 'Alphabet Français', status: 'completed' },
+    { student: studentDocs[0], start: mkDate(-5, 17), topic: 'Introduction', status: 'completed' },
+    { student: studentDocs[1], start: mkDate(-3, 14), topic: 'Basic Vocabulary', status: 'completed' },
+    { student: studentDocs[2], start: mkDate(-4, 17), topic: 'Grammar Basics', status: 'completed' },
   ];
-  for (const c of [...classesSeed, ...pastSeed]) {
+
+  for (const c of classesSeed) {
     const s = c.student;
     const startDate = new Date(c.start);
     const endDate = new Date(startDate.getTime() + s.defaultDuration * 60000);
@@ -183,12 +432,43 @@ async function ensureSeed() {
       passcode: s.permanentMeetingPasscode,
       classroomLocation: s.classroomLocation,
       topic: c.topic,
-      status: c.status || 'upcoming',
-      billable: c.billable || false,
+      status: 'upcoming',
+      isBillable: false,
+      packId: null,
+      packTransactionId: null,
       feeSnapshot: s.feePerClass,
       notes: '',
       createdAt: new Date().toISOString(),
     });
+  }
+
+  for (const c of pastSeed) {
+    const s = c.student;
+    const startDate = new Date(c.start);
+    const endDate = new Date(startDate.getTime() + s.defaultDuration * 60000);
+    const clsDoc = {
+      id: uuidv4(),
+      teacherId,
+      studentId: s.id,
+      studentName: s.name,
+      startTime: startDate.toISOString(),
+      endTime: endDate.toISOString(),
+      duration: s.defaultDuration,
+      mode: s.mode === 'hybrid' ? 'online' : s.mode,
+      platform: s.permanentMeetingPlatform,
+      meetingLink: s.permanentMeetingLink,
+      meetingId: s.permanentMeetingId,
+      passcode: s.permanentMeetingPasscode,
+      classroomLocation: s.classroomLocation,
+      topic: c.topic,
+      status: c.status,
+      isBillable: true,
+      feeSnapshot: s.feePerClass,
+      notes: '',
+      createdAt: new Date().toISOString(),
+    };
+    await database.collection('classes').insertOne(clsDoc);
+    await processAttendanceDeduction(database, clsDoc, c.status, true, teacherId);
   }
 
   // Homework seed
@@ -334,13 +614,19 @@ async function handle(request, context) {
     if (route === 'students' && method === 'GET') {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
       const students = await database.collection('students').find({ teacherId: user.id }).sort({ createdAt: -1 }).toArray();
+      for (const s of students) {
+        if (s.activePackId) {
+          s.activePack = await database.collection('classPacks').findOne({ id: s.activePackId });
+        } else {
+          s.activePack = null;
+        }
+      }
       return json({ students });
     }
 
     if (route === 'students' && method === 'POST') {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
       const b = body;
-      // Create user account for student
       const sUserId = uuidv4();
       let studentEmail = b.email;
       if (studentEmail) {
@@ -355,8 +641,14 @@ async function handle(request, context) {
           name: b.name, teacherId: user.id, createdAt: new Date().toISOString(),
         });
       }
+      const studentId = uuidv4();
+      const feePerClass = Number(b.feePerClass) || 0;
+      const defaultPackSize = Number(b.defaultPackSize) || 8;
+      const packId = uuidv4();
+      const totalAmount = feePerClass * defaultPackSize;
+
       const doc = {
-        id: uuidv4(),
+        id: studentId,
         userId: studentEmail ? sUserId : null,
         teacherId: user.id,
         name: b.name || '',
@@ -367,7 +659,10 @@ async function handle(request, context) {
         level: b.level || 'A1',
         mode: b.mode || 'online',
         classType: b.classType || 'individual',
-        feePerClass: Number(b.feePerClass) || 0,
+        feePerClass,
+        defaultPackSize,
+        activePackId: packId,
+        timezone: b.timezone || 'Asia/Kolkata',
         defaultDuration: Number(b.defaultDuration) || 60,
         permanentMeetingLink: b.permanentMeetingLink || '',
         permanentMeetingPlatform: detectPlatform(b.permanentMeetingLink) || '',
@@ -378,21 +673,69 @@ async function handle(request, context) {
         status: 'active',
         notes: b.notes || '',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       await database.collection('students').insertOne(doc);
-      return json({ student: doc, tempPassword: b.email ? tempPw : null });
+
+      const initialPack = {
+        id: packId,
+        teacherId: user.id,
+        studentId,
+        totalClasses: defaultPackSize,
+        usedClasses: 0,
+        remainingClasses: defaultPackSize,
+        feePerClassSnapshot: feePerClass,
+        totalAmount,
+        paidAmount: b.paymentAmount !== undefined ? Number(b.paymentAmount) : totalAmount,
+        status: 'active',
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await database.collection('classPacks').insertOne(initialPack);
+
+      if (b.paymentAmount !== 0) {
+        const paymentCount = await database.collection('payments').countDocuments({ teacherId: user.id });
+        await database.collection('payments').insertOne({
+          id: uuidv4(),
+          teacherId: user.id,
+          studentId,
+          studentName: doc.name,
+          packId,
+          amount: b.paymentAmount !== undefined ? Number(b.paymentAmount) : totalAmount,
+          currency: 'INR',
+          paymentDate: new Date().toISOString(),
+          paymentMethod: b.paymentMethod || 'upi',
+          reference: b.paymentReference || '',
+          receiptNumber: `RCP-${String(paymentCount + 1).padStart(4, '0')}`,
+          status: 'paid',
+          notes: 'Initial pack payment',
+          createdBy: user.id,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+
+      return json({ student: doc, pack: initialPack, tempPassword: b.email ? tempPw : null });
     }
 
-    if (route.startsWith('students/') && method === 'GET') {
+    if (route.startsWith('students/') && pathParts.length === 2 && method === 'GET') {
       const id = pathParts[1];
       const student = await database.collection('students').findOne({ id });
       if (!student) return json({ error: 'Not found' }, 404);
       if (user.role === 'teacher' && student.teacherId !== user.id) return json({ error: 'Forbidden' }, 403);
       if (user.role === 'student' && student.userId !== user.id) return json({ error: 'Forbidden' }, 403);
-      return json({ student });
+
+      let activePack = null;
+      if (student.activePackId) {
+        activePack = await database.collection('classPacks').findOne({ id: student.activePackId });
+      }
+      const packHistory = await database.collection('classPacks').find({ studentId: id }).sort({ createdAt: -1 }).toArray();
+      return json({ student, activePack, packHistory });
     }
 
-    if (route.startsWith('students/') && method === 'PUT') {
+    if (route.startsWith('students/') && pathParts.length === 2 && method === 'PUT') {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
       const id = pathParts[1];
       const student = await database.collection('students').findOne({ id });
@@ -406,6 +749,8 @@ async function handle(request, context) {
         level: b.level ?? student.level,
         mode: b.mode ?? student.mode,
         feePerClass: Number(b.feePerClass ?? student.feePerClass),
+        defaultPackSize: Number(b.defaultPackSize ?? student.defaultPackSize ?? 8),
+        timezone: b.timezone ?? student.timezone ?? 'Asia/Kolkata',
         defaultDuration: Number(b.defaultDuration ?? student.defaultDuration),
         permanentMeetingLink: b.permanentMeetingLink ?? student.permanentMeetingLink,
         permanentMeetingPlatform: detectPlatform(b.permanentMeetingLink ?? student.permanentMeetingLink) || '',
@@ -414,20 +759,125 @@ async function handle(request, context) {
         classroomLocation: b.classroomLocation ?? student.classroomLocation,
         status: b.status ?? student.status,
         notes: b.notes ?? student.notes,
+        updatedAt: new Date().toISOString(),
       };
       await database.collection('students').updateOne({ id }, { $set: updates });
       const updated = await database.collection('students').findOne({ id });
       return json({ student: updated });
     }
 
-    if (route.startsWith('students/') && method === 'DELETE') {
+    if (route.startsWith('students/') && pathParts[2] === 'renew-pack' && method === 'POST') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const id = pathParts[1];
+      const student = await database.collection('students').findOne({ id, teacherId: user.id });
+      if (!student) return json({ error: 'Student not found' }, 404);
+
+      const b = body;
+      const feePerClass = Number(b.feePerClass) || student.feePerClass || 0;
+      const totalClasses = Number(b.totalClasses) || student.defaultPackSize || 8;
+      const totalAmount = feePerClass * totalClasses;
+      const paymentAmount = Number(b.paymentAmount) || 0;
+
+      if (student.activePackId) {
+        const curPack = await database.collection('classPacks').findOne({ id: student.activePackId });
+        if (curPack && curPack.status === 'active') {
+          await database.collection('classPacks').updateOne(
+            { id: curPack.id },
+            { $set: { status: 'completed', completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() } }
+          );
+        }
+      }
+
+      const newPackId = uuidv4();
+      const newPack = {
+        id: newPackId,
+        teacherId: user.id,
+        studentId: student.id,
+        totalClasses,
+        usedClasses: 0,
+        remainingClasses: totalClasses,
+        feePerClassSnapshot: feePerClass,
+        totalAmount,
+        paidAmount: paymentAmount,
+        status: 'active',
+        startedAt: new Date().toISOString(),
+        completedAt: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await database.collection('classPacks').insertOne(newPack);
+
+      let paymentDoc = null;
+      if (paymentAmount > 0) {
+        const paymentCount = await database.collection('payments').countDocuments({ teacherId: user.id });
+        paymentDoc = {
+          id: uuidv4(),
+          teacherId: user.id,
+          studentId: student.id,
+          studentName: student.name,
+          packId: newPackId,
+          amount: paymentAmount,
+          currency: 'INR',
+          paymentDate: b.paymentDate || new Date().toISOString(),
+          paymentMethod: b.paymentMethod || 'upi',
+          reference: b.reference || '',
+          receiptNumber: `RCP-${String(paymentCount + 1).padStart(4, '0')}`,
+          status: paymentAmount >= totalAmount ? 'paid' : 'partially_paid',
+          notes: b.notes || 'Pack renewal advance payment',
+          createdBy: user.id,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await database.collection('payments').insertOne(paymentDoc);
+      }
+
+      await database.collection('students').updateOne(
+        { id: student.id },
+        { $set: { activePackId: newPackId, feePerClass, defaultPackSize: totalClasses, updatedAt: new Date().toISOString() } }
+      );
+
+      const updatedStudent = await database.collection('students').findOne({ id: student.id });
+      return json({ student: updatedStudent, pack: newPack, payment: paymentDoc });
+    }
+
+    if (route.startsWith('students/') && pathParts.length === 2 && method === 'DELETE') {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
       const id = pathParts[1];
       const student = await database.collection('students').findOne({ id });
       if (!student || student.teacherId !== user.id) return json({ error: 'Not found' }, 404);
       await database.collection('students').deleteOne({ id });
       await database.collection('classes').deleteMany({ studentId: id });
+      await database.collection('classPacks').deleteMany({ studentId: id });
+      await database.collection('packTransactions').deleteMany({ studentId: id });
+      await database.collection('payments').deleteMany({ studentId: id });
       return json({ ok: true });
+    }
+
+    // ---- CLASS PACKS ----
+    if (route === 'class-packs' && method === 'GET') {
+      let filter = {};
+      if (user.role === 'teacher') filter.teacherId = user.id;
+      else {
+        const student = await database.collection('students').findOne({ userId: user.id });
+        if (!student) return json({ packs: [] });
+        filter.studentId = student.id;
+      }
+      const packs = await database.collection('classPacks').find(filter).sort({ createdAt: -1 }).toArray();
+      return json({ packs });
+    }
+
+    if (route.startsWith('class-packs/') && pathParts.length === 2 && method === 'GET') {
+      const id = pathParts[1];
+      const pack = await database.collection('classPacks').findOne({ id });
+      if (!pack) return json({ error: 'Not found' }, 404);
+      if (user.role === 'teacher' && pack.teacherId !== user.id) return json({ error: 'Forbidden' }, 403);
+      if (user.role === 'student') {
+        const student = await database.collection('students').findOne({ userId: user.id });
+        if (!student || pack.studentId !== student.id) return json({ error: 'Forbidden' }, 403);
+      }
+      const transactions = await database.collection('packTransactions').find({ packId: id }).sort({ createdAt: -1 }).toArray();
+      const payments = await database.collection('payments').find({ packId: id }).sort({ paymentDate: -1 }).toArray();
+      return json({ pack, transactions, payments });
     }
 
     // ---- CLASSES ----
@@ -453,7 +903,6 @@ async function handle(request, context) {
       const student = await database.collection('students').findOne({ id: b.studentId, teacherId: user.id });
       if (!student) return json({ error: 'Student not found' }, 404);
 
-      // Build occurrence dates
       const startTimes = [];
       if (b.recurring && Array.isArray(b.recurringDays) && b.recurringDays.length > 0) {
         const start = new Date(b.startDate);
@@ -494,7 +943,9 @@ async function handle(request, context) {
           classroomLocation: mode === 'online' ? '' : (b.classroomLocation || student.classroomLocation || ''),
           topic: b.topic || '',
           status: 'upcoming',
-          billable: false,
+          isBillable: false,
+          packId: null,
+          packTransactionId: null,
           feeSnapshot: student.feePerClass,
           notes: '',
           createdAt: new Date().toISOString(),
@@ -528,6 +979,10 @@ async function handle(request, context) {
     if (route.startsWith('classes/') && pathParts.length === 2 && method === 'DELETE') {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
       const id = pathParts[1];
+      const cls = await database.collection('classes').findOne({ id, teacherId: user.id });
+      if (cls && cls.packId) {
+        await processAttendanceDeduction(database, cls, 'cancelled', false, user.id);
+      }
       await database.collection('classes').deleteOne({ id, teacherId: user.id });
       return json({ ok: true });
     }
@@ -537,36 +992,151 @@ async function handle(request, context) {
       const id = pathParts[1];
       const cls = await database.collection('classes').findOne({ id });
       if (!cls || cls.teacherId !== user.id) return json({ error: 'Not found' }, 404);
-      const { status, notes } = body; // completed | absent | cancelled | rescheduled
-      const billableMap = { completed: true, absent: false, cancelled: false, rescheduled: false };
-      await database.collection('classes').updateOne({ id }, { $set: { status, notes: notes || cls.notes || '', billable: billableMap[status] ?? false } });
-      const updated = await database.collection('classes').findOne({ id });
+      const { status, isBillable, notes } = body;
+      if (notes !== undefined) {
+        await database.collection('classes').updateOne({ id }, { $set: { notes } });
+      }
+      const updated = await processAttendanceDeduction(database, cls, status || cls.status, isBillable, user.id);
       return json({ class: updated });
     }
 
     // ---- BILLING ----
     if (route === 'billing/summary' && method === 'GET') {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
-      const monthParam = url.searchParams.get('month'); // YYYY-MM
-      const now = new Date();
-      const y = monthParam ? Number(monthParam.split('-')[0]) : now.getFullYear();
-      const m = monthParam ? Number(monthParam.split('-')[1]) - 1 : now.getMonth();
-      const start = new Date(y, m, 1).toISOString();
-      const end = new Date(y, m + 1, 1).toISOString();
+      const monthParam = url.searchParams.get('month');
+      const { monthStr, startISO, endISO } = getKolkataMonthRange(monthParam);
+
       const students = await database.collection('students').find({ teacherId: user.id }).toArray();
       const summaries = [];
+
+      let completedThisMonthTotal = 0;
+      let billableThisMonthTotal = 0;
+      let activePacksCount = 0;
+      let lowBalancePacksCount = 0;
+      let exhaustedPacksCount = 0;
+      let renewalsRequiredCount = 0;
+
       for (const s of students) {
-        const classes = await database.collection('classes').find({ teacherId: user.id, studentId: s.id, startTime: { $gte: start, $lt: end } }).toArray();
-        const scheduled = classes.length;
-        const completed = classes.filter(c => c.status === 'completed').length;
-        const billable = classes.filter(c => c.billable).length;
-        const totalDue = billable * (s.feePerClass || 0);
+        const classesInMonth = await database.collection('classes').find({
+          teacherId: user.id,
+          studentId: s.id,
+          startTime: { $gte: startISO, $lt: endISO }
+        }).toArray();
+
+        const completedClasses = classesInMonth.filter(c => getAttendanceRules(c.status).countCompleted);
+        const billableClasses = classesInMonth.filter(c => c.isBillable);
+
+        completedThisMonthTotal += completedClasses.length;
+        billableThisMonthTotal += billableClasses.length;
+
+        let activePack = null;
+        if (s.activePackId) {
+          activePack = await database.collection('classPacks').findOne({ id: s.activePackId });
+        }
+
+        if (activePack && activePack.status === 'active') {
+          activePacksCount++;
+          if (activePack.remainingClasses <= 2 && activePack.remainingClasses > 0) {
+            lowBalancePacksCount++;
+          }
+          if (activePack.remainingClasses <= 0) {
+            exhaustedPacksCount++;
+            renewalsRequiredCount++;
+          }
+        } else {
+          renewalsRequiredCount++;
+        }
+
+        let advancePaymentStatus = 'none';
+        if (activePack) {
+          if (activePack.paidAmount >= activePack.totalAmount) advancePaymentStatus = 'paid';
+          else if (activePack.paidAmount > 0) advancePaymentStatus = 'partially_paid';
+          else advancePaymentStatus = 'pending';
+        }
+
         summaries.push({
-          studentId: s.id, studentName: s.name, level: s.level,
-          scheduled, completed, billable, feePerClass: s.feePerClass, totalDue,
+          studentId: s.id,
+          studentName: s.name,
+          level: s.level,
+          feePerClass: s.feePerClass,
+          activePack: activePack ? {
+            id: activePack.id,
+            totalClasses: activePack.totalClasses,
+            usedClasses: activePack.usedClasses,
+            remainingClasses: activePack.remainingClasses,
+            status: activePack.status,
+            totalAmount: activePack.totalAmount,
+            paidAmount: activePack.paidAmount,
+          } : null,
+          completedThisMonth: completedClasses.length,
+          billableThisMonth: billableClasses.length,
+          advancePaymentStatus,
+          renewalRequired: !activePack || activePack.status !== 'active' || activePack.remainingClasses <= 0,
         });
       }
-      return json({ month: `${y}-${String(m+1).padStart(2,'0')}`, summaries });
+
+      const paymentsInMonth = await database.collection('payments').find({
+        teacherId: user.id,
+        paymentDate: { $gte: startISO, $lt: endISO }
+      }).toArray();
+      const advancePaymentsThisMonth = paymentsInMonth.reduce((sum, p) => sum + (p.amount || 0), 0);
+
+      const activePacksList = await database.collection('classPacks').find({ teacherId: user.id, status: 'active' }).toArray();
+      const packPaymentsOutstanding = activePacksList.reduce((sum, p) => sum + Math.max(0, (p.totalAmount || 0) - (p.paidAmount || 0)), 0);
+
+      return json({
+        month: monthStr,
+        summaryCards: {
+          completedThisMonth: completedThisMonthTotal,
+          billableThisMonth: billableThisMonthTotal,
+          activeStudents: students.filter(s => s.status === 'active').length,
+          activePacks: activePacksCount,
+          lowBalancePacks: lowBalancePacksCount,
+          exhaustedPacks: exhaustedPacksCount,
+          renewalsRequired: renewalsRequiredCount,
+          advancePaymentsThisMonth,
+          packPaymentsOutstanding,
+        },
+        summaries,
+      });
+    }
+
+    if (route.startsWith('billing/student/') && method === 'GET') {
+      const sid = pathParts[2];
+      const monthParam = url.searchParams.get('month');
+      const { monthStr, startISO, endISO } = getKolkataMonthRange(monthParam);
+
+      const student = await database.collection('students').findOne({ id: sid });
+      if (!student) return json({ error: 'Not found' }, 404);
+      if (user.role === 'teacher' && student.teacherId !== user.id) return json({ error: 'Forbidden' }, 403);
+      if (user.role === 'student' && student.userId !== user.id) return json({ error: 'Forbidden' }, 403);
+
+      const classes = await database.collection('classes').find({ studentId: sid, startTime: { $gte: startISO, $lt: endISO } }).sort({ startTime: 1 }).toArray();
+      const payments = await database.collection('payments').find({ studentId: sid }).sort({ paymentDate: -1 }).toArray();
+      const teacher = await database.collection('users').findOne({ id: student.teacherId });
+
+      let activePack = null;
+      if (student.activePackId) {
+        activePack = await database.collection('classPacks').findOne({ id: student.activePackId });
+      }
+      const packHistory = await database.collection('classPacks').find({ studentId: sid }).sort({ createdAt: -1 }).toArray();
+      const transactions = await database.collection('packTransactions').find({ studentId: sid }).sort({ createdAt: -1 }).toArray();
+
+      const completedThisMonth = classes.filter(c => getAttendanceRules(c.status).countCompleted).length;
+      const billableThisMonth = classes.filter(c => c.isBillable).length;
+
+      return json({
+        student,
+        teacher: { name: teacher?.name, academyName: teacher?.academyName },
+        month: monthStr,
+        classes,
+        payments,
+        activePack,
+        packHistory,
+        transactions,
+        completedThisMonth,
+        billableThisMonth,
+      });
     }
 
     // ---- STUDENT PORTAL ----
@@ -575,24 +1145,49 @@ async function handle(request, context) {
       const student = await database.collection('students').findOne({ userId: user.id });
       if (!student) return json({ error: 'Not found' }, 404);
       const teacher = await database.collection('users').findOne({ id: student.teacherId });
+      let activePack = null;
+      if (student.activePackId) {
+        activePack = await database.collection('classPacks').findOne({ id: student.activePackId });
+      }
       const teacherInfo = teacher ? { name: teacher.name, academyName: teacher.academyName } : null;
-      return json({ student, teacher: teacherInfo });
+      return json({ student, teacher: teacherInfo, activePack });
     }
 
     if (route === 'student/dashboard' && method === 'GET') {
       if (user.role !== 'student') return json({ error: 'Forbidden' }, 403);
       const student = await database.collection('students').findOne({ userId: user.id });
       if (!student) return json({ error: 'Not found' }, 404);
+
       const now = new Date().toISOString();
+      const { startISO } = getKolkataMonthRange();
+
       const upcoming = await database.collection('classes').find({ studentId: student.id, startTime: { $gte: now } }).sort({ startTime: 1 }).limit(5).toArray();
       const past = await database.collection('classes').find({ studentId: student.id, startTime: { $lt: now } }).sort({ startTime: -1 }).limit(20).toArray();
-      const monthStart = new Date();
-      monthStart.setDate(1); monthStart.setHours(0,0,0,0);
-      const thisMonth = await database.collection('classes').find({ studentId: student.id, startTime: { $gte: monthStart.toISOString() } }).toArray();
-      const monthlyCompleted = thisMonth.filter(c => c.status === 'completed').length;
-      const monthlyBillable = thisMonth.filter(c => c.billable).length;
+
+      const thisMonthClasses = await database.collection('classes').find({ studentId: student.id, startTime: { $gte: startISO } }).toArray();
+      const monthlyCompleted = thisMonthClasses.filter(c => getAttendanceRules(c.status).countCompleted).length;
+      const monthlyBillable = thisMonthClasses.filter(c => c.isBillable).length;
+
+      let activePack = null;
+      if (student.activePackId) {
+        activePack = await database.collection('classPacks').findOne({ id: student.activePackId });
+      }
+      const packHistory = await database.collection('classPacks').find({ studentId: student.id }).sort({ createdAt: -1 }).toArray();
+      const payments = await database.collection('payments').find({ studentId: student.id }).sort({ paymentDate: -1 }).toArray();
       const homework = await database.collection('homework').find({ studentId: student.id }).sort({ createdAt: -1 }).toArray();
-      return json({ student, upcoming, past, monthlyCompleted, monthlyBillable, feePerClass: student.feePerClass, homework });
+
+      return json({
+        student,
+        activePack,
+        upcoming,
+        past,
+        monthlyCompleted,
+        monthlyBillable,
+        feePerClass: activePack ? activePack.feePerClassSnapshot : student.feePerClass,
+        packHistory,
+        payments,
+        homework,
+      });
     }
 
     // ---- HOMEWORK ----

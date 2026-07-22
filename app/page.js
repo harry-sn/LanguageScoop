@@ -526,46 +526,72 @@ function ClassCard({ cls, isStudent = false, onMarkAttendance }) {
 }
 
 function AttendanceDialog({ cls, open, onClose, onDone }) {
-  const [status, setStatus] = useState('completed');
+  const [status, setStatus] = useState('present');
+  const [isBillable, setIsBillable] = useState(true);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { if (cls) { setStatus('completed'); setNotes(cls.notes || ''); } }, [cls]);
+  useEffect(() => {
+    if (cls) {
+      setStatus(cls.status === 'upcoming' ? 'present' : cls.status);
+      setIsBillable(cls.isBillable !== undefined ? cls.isBillable : true);
+      setNotes(cls.notes || '');
+    }
+  }, [cls]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await api(`/classes/${cls.id}/attendance`, { method: 'POST', body: { status, notes } });
+      await api(`/classes/${cls.id}/attendance`, { method: 'POST', body: { status, isBillable, notes } });
       toast.success('Attendance saved');
       onDone(); onClose();
     } catch (e) { toast.error(e.message); } finally { setSaving(false); }
   };
 
   if (!cls) return null;
+  const opts = [
+    { key: 'present', label: 'Present', desc: 'Deducts 1 pack credit', cls: 'bg-emerald-50 border-emerald-200 text-emerald-900' },
+    { key: 'student_no_show', label: 'Student No Show', desc: 'Deducts 1 pack credit', cls: 'bg-rose-50 border-rose-200 text-rose-900' },
+    { key: 'student_cancelled_late', label: 'Cancelled Late (Student)', desc: 'Deducts 1 pack credit', cls: 'bg-orange-50 border-orange-200 text-orange-900' },
+    { key: 'student_cancelled_on_time', label: 'Cancelled On-Time', desc: 'No deduction', cls: 'bg-slate-50 border-slate-200 text-slate-800' },
+    { key: 'teacher_cancelled', label: 'Teacher Cancelled', desc: 'No deduction', cls: 'bg-slate-50 border-slate-200 text-slate-800' },
+    { key: 'rescheduled', label: 'Rescheduled', desc: 'No deduction', cls: 'bg-amber-50 border-amber-200 text-amber-900' },
+    { key: 'trial', label: 'Trial Class', desc: 'Complimentary trial', cls: 'bg-purple-50 border-purple-200 text-purple-900' },
+    { key: 'complimentary', label: 'Complimentary', desc: 'No deduction', cls: 'bg-blue-50 border-blue-200 text-blue-900' },
+  ];
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent>
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Did this class happen?</DialogTitle>
+          <DialogTitle>Class Attendance & Pack Deduction</DialogTitle>
           <DialogDescription>{cls.studentName} · {fmtDate(cls.startTime)} at {fmtTime(cls.startTime)}</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-2 py-2">
-          {[
-            { key: 'completed', label: 'Completed', icon: CheckCircle2, cls: 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100 text-emerald-900' },
-            { key: 'absent', label: 'Student Absent', icon: XCircle, cls: 'bg-orange-50 border-orange-200 hover:bg-orange-100 text-orange-900' },
-            { key: 'cancelled', label: 'Teacher Cancelled', icon: XCircle, cls: 'bg-slate-50 border-slate-200 hover:bg-slate-100' },
-            { key: 'rescheduled', label: 'Rescheduled', icon: AlertCircle, cls: 'bg-amber-50 border-amber-200 hover:bg-amber-100 text-amber-900' },
-          ].map(opt => (
-            <button key={opt.key} onClick={() => setStatus(opt.key)}
-              className={`p-3 rounded-lg border-2 text-left transition ${status === opt.key ? 'border-primary ring-2 ring-primary/20' : 'border-transparent'} ${opt.cls}`}>
-              <opt.icon className="w-5 h-5 mb-1" />
-              <div className="font-medium text-sm">{opt.label}</div>
+          {opts.map(opt => (
+            <button key={opt.key} onClick={() => {
+              setStatus(opt.key);
+              const rules = { present: true, student_no_show: true, student_cancelled_late: true, completed: true };
+              setIsBillable(!!rules[opt.key]);
+            }}
+              className={`p-2.5 rounded-lg border-2 text-left transition ${status === opt.key ? 'border-primary ring-2 ring-primary/20 font-medium' : 'border-transparent'} ${opt.cls}`}>
+              <div className="font-semibold text-sm">{opt.label}</div>
+              <div className="text-xs opacity-75 mt-0.5">{opt.desc}</div>
             </button>
           ))}
         </div>
-        <div className="space-y-2">
-          <Label>Notes (optional)</Label>
-          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Lesson topic, homework given..." />
+
+        <div className="flex items-center justify-between p-3 bg-slate-50 border rounded-lg">
+          <div>
+            <Label htmlFor="billable-override" className="cursor-pointer font-semibold text-sm">Deduct 1 Class Credit from Active Pack</Label>
+            <p className="text-xs text-muted-foreground">Override billable status for this class</p>
+          </div>
+          <input type="checkbox" id="billable-override" checked={isBillable} onChange={(e) => setIsBillable(e.target.checked)} className="w-5 h-5 accent-primary cursor-pointer" />
+        </div>
+
+        <div className="space-y-1">
+          <Label>Teacher Notes (optional)</Label>
+          <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Lesson topic, notes..." />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
@@ -670,11 +696,123 @@ function TeacherDashboard({ onNavigate }) {
   );
 }
 
+function RenewPackDialog({ student, open, onClose, onDone }) {
+  const [feePerClass, setFeePerClass] = useState(800);
+  const [totalClasses, setTotalClasses] = useState(8);
+  const [paymentAmount, setPaymentAmount] = useState(6400);
+  const [paymentMethod, setPaymentMethod] = useState('upi');
+  const [reference, setReference] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (student) {
+      const fee = student.feePerClass || 800;
+      const size = student.defaultPackSize || 8;
+      setFeePerClass(fee);
+      setTotalClasses(size);
+      setPaymentAmount(fee * size);
+    }
+  }, [student]);
+
+  useEffect(() => {
+    setPaymentAmount(feePerClass * totalClasses);
+  }, [feePerClass, totalClasses]);
+
+  const handleRenew = async () => {
+    setSaving(true);
+    try {
+      await api(`/students/${student.id}/renew-pack`, {
+        method: 'POST',
+        body: { feePerClass, totalClasses, paymentAmount, paymentMethod, reference, notes }
+      });
+      toast.success(`Pack renewed! ${totalClasses} classes added.`);
+      onDone(); onClose();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!student) return null;
+  const packTotal = feePerClass * totalClasses;
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Renew Class Pack</DialogTitle>
+          <DialogDescription>Create a new prepaid pack for {student.name}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Fee per Class (₹)</Label>
+              <Input type="number" value={feePerClass} onChange={(e) => setFeePerClass(Number(e.target.value))} />
+            </div>
+            <div className="space-y-1">
+              <Label>Pack Size (classes)</Label>
+              <Input type="number" value={totalClasses} onChange={(e) => setTotalClasses(Number(e.target.value))} />
+            </div>
+          </div>
+
+          <div className="p-3 bg-primary/5 rounded-lg border border-primary/20 flex justify-between items-center">
+            <div>
+              <div className="text-xs text-muted-foreground">Calculated Pack Amount</div>
+              <div className="text-xl font-bold text-primary">{fmtMoney(packTotal)}</div>
+            </div>
+            <div className="text-xs text-muted-foreground font-mono">{totalClasses} × {fmtMoney(feePerClass)}</div>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-1">
+            <Label>Advance Payment Received (₹)</Label>
+            <Input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(Number(e.target.value))} />
+          </div>
+
+          {paymentAmount > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Payment Method</Label>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="upi">UPI / GPay / PhonePe</SelectItem>
+                    <SelectItem value="bank_transfer">Bank Transfer (IMPS/NEFT)</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Transaction Ref</Label>
+                <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UPI ID / Ref No" />
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1">
+            <Label>Notes (optional)</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. 8-class pack renewal" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleRenew} disabled={saving}>{saving ? 'Renewing...' : 'Confirm Renewal'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function StudentsPage() {
   const [students, setStudents] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState(null);
-  const empty = { name: '', email: '', phone: '', parentName: '', parentPhone: '', level: 'A1', mode: 'online', feePerClass: 800, defaultDuration: 60, permanentMeetingLink: '', permanentMeetingId: '', permanentMeetingPasscode: '', classroomLocation: '', notes: '' };
+  const [renewStudent, setRenewStudent] = useState(null);
+  const empty = { name: '', email: '', phone: '', parentName: '', parentPhone: '', level: 'A1', mode: 'online', feePerClass: 800, defaultPackSize: 8, paymentAmount: 6400, defaultDuration: 60, permanentMeetingLink: '', permanentMeetingId: '', permanentMeetingPasscode: '', classroomLocation: '', notes: '' };
   const [form, setForm] = useState(empty);
 
   const load = async () => { try { const d = await api('/students'); setStudents(d.students); } catch (e) { toast.error(e.message); } };
@@ -721,23 +859,45 @@ function StudentsPage() {
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
           {students.map(s => (
-            <Card key={s.id} className="hover:shadow-md transition cursor-pointer" onClick={() => openEdit(s)}>
+            <Card key={s.id} className="hover:shadow-md transition">
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
-                  <Avatar className="w-12 h-12"><AvatarFallback className="bg-primary/10 text-primary font-semibold">{initials(s.name)}</AvatarFallback></Avatar>
+                  <Avatar className="w-12 h-12" onClick={() => openEdit(s)}><AvatarFallback className="bg-primary/10 text-primary font-semibold cursor-pointer">{initials(s.name)}</AvatarFallback></Avatar>
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold truncate">{s.name}</div>
+                    <div className="font-semibold truncate cursor-pointer" onClick={() => openEdit(s)}>{s.name}</div>
                     <div className="text-sm text-muted-foreground truncate">{s.email}</div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <Badge variant="outline">Level {s.level}</Badge>
                       <Badge variant="outline" className="capitalize">{s.mode}</Badge>
                       <Badge variant="outline">{fmtMoney(s.feePerClass)}/class</Badge>
                     </div>
-                    {s.permanentMeetingLink && s.mode !== 'offline' && (
-                      <div className="mt-2 flex items-center gap-1 text-xs text-emerald-600">
-                        <Check className="w-3 h-3" />Permanent {s.permanentMeetingPlatform === 'zoom' ? 'Zoom' : 'meeting'} link saved
+
+                    <div className="mt-3 p-2.5 bg-slate-50 rounded-lg text-xs space-y-1.5 border">
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground font-medium">Class Pack Progress:</span>
+                        {s.activePack ? (
+                          <Badge variant="outline" className={s.activePack.remainingClasses <= 2 ? 'bg-amber-100 text-amber-800 border-amber-200 font-semibold' : 'bg-emerald-100 text-emerald-800 border-emerald-200 font-semibold'}>
+                            {s.activePack.usedClasses} / {s.activePack.totalClasses} used ({s.activePack.remainingClasses} left)
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-200">No active pack</Badge>
+                        )}
                       </div>
-                    )}
+                      {s.activePack && (
+                        <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                          <div className="bg-primary h-full rounded-full transition-all" style={{ width: `${Math.min(100, (s.activePack.usedClasses / s.activePack.totalClasses) * 100)}%` }}></div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setRenewStudent(s)} className="gap-1 text-xs text-primary border-primary/30 hover:bg-primary/5">
+                        Renew Pack
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="text-xs">
+                        Edit Details
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -746,11 +906,13 @@ function StudentsPage() {
         </div>
       )}
 
+      <RenewPackDialog student={renewStudent} open={!!renewStudent} onClose={() => setRenewStudent(null)} onDone={load} />
+
       <Dialog open={showAdd} onOpenChange={(o) => { if (!o) { setShowAdd(false); setSelected(null); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selected ? 'Edit Student' : 'Add New Student'}</DialogTitle>
-            <DialogDescription>Store details, permanent Zoom link, and fee.</DialogDescription>
+            <DialogDescription>Store details, fee per class, and class pack settings.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
@@ -777,8 +939,22 @@ function StudentsPage() {
                 </Select>
               </div>
               <div className="space-y-1"><Label>Fee per class (₹)</Label><Input type="number" value={form.feePerClass} onChange={(e) => setForm({ ...form, feePerClass: Number(e.target.value) })} /></div>
-              <div className="space-y-1"><Label>Duration (min)</Label><Input type="number" value={form.defaultDuration} onChange={(e) => setForm({ ...form, defaultDuration: Number(e.target.value) })} /></div>
+              <div className="space-y-1"><Label>Default Pack Size</Label><Input type="number" value={form.defaultPackSize} onChange={(e) => setForm({ ...form, defaultPackSize: Number(e.target.value) })} /></div>
             </div>
+            {!selected && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
+                <div className="text-xs font-semibold text-blue-900">Initial Pack Payment (Advance)</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1"><Label className="text-xs">Initial Advance (₹)</Label><Input type="number" value={form.paymentAmount} onChange={(e) => setForm({ ...form, paymentAmount: Number(e.target.value) })} /></div>
+                  <div className="space-y-1"><Label className="text-xs">Payment Method</Label>
+                    <Select value={form.paymentMethod || 'upi'} onValueChange={(v) => setForm({ ...form, paymentMethod: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent><SelectItem value="upi">UPI</SelectItem><SelectItem value="bank_transfer">Bank</SelectItem><SelectItem value="cash">Cash</SelectItem></SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            )}
             {form.mode !== 'offline' && (
               <>
                 <div className="space-y-1"><Label>Permanent Meeting Link (Zoom/Meet/Teams)</Label><Input value={form.permanentMeetingLink} onChange={(e) => setForm({ ...form, permanentMeetingLink: e.target.value })} placeholder="https://zoom.us/j/..." /></div>
@@ -944,16 +1120,24 @@ function ClassesPage() {
 
 function BillingPage() {
   const [data, setData] = useState(null);
+  const [renewStudent, setRenewStudent] = useState(null);
   const now = new Date();
   const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`);
 
-  useEffect(() => { api(`/billing/summary?month=${month}`).then(setData).catch(e => toast.error(e.message)); }, [month]);
+  const load = async () => {
+    try {
+      const d = await api(`/billing/summary?month=${month}`);
+      setData(d);
+    } catch (e) { toast.error(e.message); }
+  };
 
-  const total = (data?.summaries || []).reduce((s, x) => s + x.totalDue, 0);
-  const totalBillable = (data?.summaries || []).reduce((s, x) => s + x.billable, 0);
+  useEffect(() => { load(); }, [month]);
+
+  const cards = data?.summaryCards || {};
 
   const shareWhatsapp = (s) => {
-    const msg = `Fee Summary - ${s.studentName} - ${month}\n\nBillable classes: ${s.billable}\nFee per class: ${fmtMoney(s.feePerClass)}\n*Total Due: ${fmtMoney(s.totalDue)}*`;
+    const packInfo = s.activePack ? `${s.activePack.usedClasses} of ${s.activePack.totalClasses} classes used (${s.activePack.remainingClasses} remaining)` : 'No active pack';
+    const msg = `Class Pack & Fee Summary - ${s.studentName} - ${month}\n\nCompleted this month: ${s.completedThisMonth}\nFee per class: ${fmtMoney(s.feePerClass)}\nPack Status: ${packInfo}\nAdvance Payment: ${s.advancePaymentStatus.toUpperCase()}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -961,8 +1145,10 @@ function BillingPage() {
     try {
       const d = await api(`/billing/student/${s.studentId}?month=${m}`);
       const w = window.open('', '_blank');
-      const rows = d.classes.map(c => `<tr><td style="padding:6px;border-bottom:1px solid #eee">${new Date(c.startTime).toLocaleDateString('en-IN')}</td><td style="padding:6px;border-bottom:1px solid #eee">${c.topic || 'Class'}</td><td style="padding:6px;border-bottom:1px solid #eee;text-transform:capitalize">${c.status}</td><td style="padding:6px;border-bottom:1px solid #eee;text-align:right">${c.billable ? '₹' + (c.feeSnapshot || 0) : '—'}</td></tr>`).join('');
-      w.document.write(`<html><head><title>Fee Summary - ${d.student.name}</title></head><body style="font-family:system-ui;padding:32px;max-width:700px;margin:auto"><div style="text-align:center;margin-bottom:24px"><h2 style="margin:0;color:#2563EB">${d.teacher.academyName || 'Language Scoop'}</h2><div style="color:#64748b">Fee Summary · ${m}</div></div><table style="width:100%;margin-bottom:16px"><tr><td><strong>Student:</strong> ${d.student.name}</td><td style="text-align:right"><strong>Level:</strong> ${d.student.level}</td></tr><tr><td><strong>Fee per class:</strong> ₹${d.student.feePerClass}</td><td style="text-align:right"><strong>Month:</strong> ${m}</td></tr></table><h3>Classes</h3><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Date</th><th style="padding:8px;text-align:left">Topic</th><th style="padding:8px;text-align:left">Status</th><th style="padding:8px;text-align:right">Amount</th></tr></thead><tbody>${rows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:#94a3b8">No classes</td></tr>'}</tbody></table><div style="margin-top:24px;padding:16px;background:#f0fdf4;border-radius:8px"><div style="display:flex;justify-content:space-between;font-size:14px"><span>Billable classes:</span><span><strong>${d.billable}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Total Due:</span><span><strong>₹${d.totalDue.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:14px;margin-top:4px"><span>Paid:</span><span><strong>₹${d.paid.toLocaleString('en-IN')}</strong></span></div><div style="display:flex;justify-content:space-between;font-size:18px;margin-top:8px;padding-top:8px;border-top:1px solid #d1fae5"><span><strong>Balance:</strong></span><span style="color:#059669"><strong>₹${d.balance.toLocaleString('en-IN')}</strong></span></div></div><div style="margin-top:32px;text-align:center;color:#94a3b8;font-size:12px">Generated via Language Scoop · ${new Date().toLocaleDateString('en-IN')}</div><div style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#2563EB;color:white;border:none;border-radius:6px;cursor:pointer">Print / Save as PDF</button></div></body></html>`);
+      const rows = d.classes.map(c => `<tr><td style="padding:6px;border-bottom:1px solid #eee">${new Date(c.startTime).toLocaleDateString('en-IN')}</td><td style="padding:6px;border-bottom:1px solid #eee">${c.topic || 'Class'}</td><td style="padding:6px;border-bottom:1px solid #eee;text-transform:capitalize">${c.status}</td><td style="padding:6px;border-bottom:1px solid #eee;text-align:right">${c.isBillable ? 'Deducted (1 credit)' : 'No deduction'}</td></tr>`).join('');
+      const packRow = d.activePack ? `Used ${d.activePack.usedClasses} of ${d.activePack.totalClasses} classes (${d.activePack.remainingClasses} remaining). Pack Total: ₹${d.activePack.totalAmount.toLocaleString('en-IN')}, Paid: ₹${d.activePack.paidAmount.toLocaleString('en-IN')}` : 'No active pack';
+      
+      w.document.write(`<html><head><title>Class Pack Statement - ${d.student.name}</title></head><body style="font-family:system-ui;padding:32px;max-width:700px;margin:auto"><div style="text-align:center;margin-bottom:24px"><h2 style="margin:0;color:#2563EB">${d.teacher?.academyName || 'Language Scoop'}</h2><div style="color:#64748b">Prepaid Class Pack Statement · ${m}</div></div><table style="width:100%;margin-bottom:16px"><tr><td><strong>Student:</strong> ${d.student.name}</td><td style="text-align:right"><strong>Level:</strong> ${d.student.level}</td></tr><tr><td><strong>Fee per class:</strong> ₹${d.student.feePerClass}</td><td style="text-align:right"><strong>Month:</strong> ${m}</td></tr></table><div style="padding:12px;background:#f8fafc;border-radius:6px;margin-bottom:16px;font-size:14px"><strong>Active Pack Summary:</strong> ${packRow}</div><h3>Classes Attended in ${m}</h3><table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f1f5f9"><th style="padding:8px;text-align:left">Date</th><th style="padding:8px;text-align:left">Topic</th><th style="padding:8px;text-align:left">Attendance</th><th style="padding:8px;text-align:right">Pack Credit</th></tr></thead><tbody>${rows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:#94a3b8">No classes this month</td></tr>'}</tbody></table><div style="margin-top:32px;text-align:center;color:#94a3b8;font-size:12px">Generated via Language Scoop · ${new Date().toLocaleDateString('en-IN')}</div><div style="margin-top:16px;text-align:center"><button onclick="window.print()" style="padding:8px 24px;background:#2563EB;color:white;border:none;border-radius:6px;cursor:pointer">Print / Save as PDF</button></div></body></html>`);
       w.document.close();
     } catch (e) { toast.error(e.message); }
   };
@@ -970,44 +1156,80 @@ function BillingPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div><h1 className="text-2xl font-bold">Billing & Fees</h1><p className="text-muted-foreground text-sm">Monthly billable class calculation</p></div>
+        <div><h1 className="text-2xl font-bold">Class Packs & Billing</h1><p className="text-muted-foreground text-sm">Prepaid pack progress and monthly attendance overview</p></div>
         <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-auto" />
       </div>
-      <div className="grid grid-cols-3 gap-3">
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground uppercase">Total Due</p><p className="text-2xl font-bold text-emerald-600 mt-1">{fmtMoney(total)}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground uppercase">Billable</p><p className="text-2xl font-bold mt-1">{totalBillable}</p></CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground uppercase">Students</p><p className="text-2xl font-bold mt-1">{data?.summaries?.length || 0}</p></CardContent></Card>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground uppercase">Completed ({month.slice(5)})</p><p className="text-xl font-bold mt-1 text-primary">{cards.completedThisMonth || 0}</p></CardContent></Card>
+        <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground uppercase">Billable ({month.slice(5)})</p><p className="text-xl font-bold mt-1 text-emerald-600">{cards.billableThisMonth || 0}</p></CardContent></Card>
+        <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground uppercase">Active Packs</p><p className="text-xl font-bold mt-1 text-blue-600">{cards.activePacks || 0}</p></CardContent></Card>
+        <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground uppercase">Low / Exhausted</p><p className="text-xl font-bold mt-1 text-rose-600">{cards.renewalsRequired || 0}</p></CardContent></Card>
+        <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground uppercase">Advance Recd</p><p className="text-xl font-bold mt-1 text-emerald-600">{fmtMoney(cards.advancePaymentsThisMonth || 0)}</p></CardContent></Card>
+        <Card><CardContent className="p-3"><p className="text-xs text-muted-foreground uppercase">Pack Due</p><p className="text-xl font-bold mt-1 text-amber-600">{fmtMoney(cards.packPaymentsOutstanding || 0)}</p></CardContent></Card>
       </div>
+
       <div className="grid gap-3">
         {(data?.summaries || []).map(s => (
           <Card key={s.studentId}>
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-3">
-                  <Avatar><AvatarFallback className="bg-primary/10 text-primary">{initials(s.studentName)}</AvatarFallback></Avatar>
+                  <Avatar><AvatarFallback className="bg-primary/10 text-primary font-semibold">{initials(s.studentName)}</AvatarFallback></Avatar>
                   <div>
-                    <div className="font-semibold">{s.studentName}</div>
-                    <div className="text-sm text-muted-foreground">Level {s.level} · {fmtMoney(s.feePerClass)}/class</div>
+                    <div className="font-semibold flex items-center gap-2">
+                      {s.studentName}
+                      {s.renewalRequired && <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-200">Renewal Required</Badge>}
+                    </div>
+                    <div className="text-sm text-muted-foreground">Level {s.level} · Fee: {fmtMoney(s.feePerClass)}/class</div>
                   </div>
                 </div>
+
                 <div className="text-right">
-                  <div className="text-2xl font-bold text-emerald-600">{fmtMoney(s.totalDue)}</div>
-                  <div className="text-xs text-muted-foreground">{s.billable} × {fmtMoney(s.feePerClass)}</div>
+                  {s.activePack ? (
+                    <div>
+                      <div className="text-lg font-bold text-primary">{s.activePack.usedClasses} / {s.activePack.totalClasses} used</div>
+                      <div className="text-xs text-muted-foreground">{s.activePack.remainingClasses} classes remaining</div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-rose-600 font-medium">No Active Pack</div>
+                  )}
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm">
-                <div className="p-2 bg-slate-50 rounded"><div className="text-muted-foreground text-xs">Scheduled</div><div className="font-semibold">{s.scheduled}</div></div>
-                <div className="p-2 bg-blue-50 rounded"><div className="text-blue-700 text-xs">Completed</div><div className="font-semibold">{s.completed}</div></div>
-                <div className="p-2 bg-emerald-50 rounded"><div className="text-emerald-700 text-xs">Billable</div><div className="font-semibold">{s.billable}</div></div>
+
+              {s.activePack && (
+                <div className="mt-3 w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                  <div className={`h-full rounded-full transition-all ${s.activePack.remainingClasses <= 2 ? 'bg-amber-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, (s.activePack.usedClasses / s.activePack.totalClasses) * 100)}%` }}></div>
+                </div>
+              )}
+
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="p-2 bg-slate-50 rounded border"><div className="text-muted-foreground">Completed ({month.slice(5)})</div><div className="font-bold text-sm mt-0.5">{s.completedThisMonth}</div></div>
+                <div className="p-2 bg-slate-50 rounded border"><div className="text-muted-foreground">Billable ({month.slice(5)})</div><div className="font-bold text-sm mt-0.5">{s.billableThisMonth}</div></div>
+                <div className="p-2 bg-slate-50 rounded border"><div className="text-muted-foreground">Advance Status</div>
+                  <Badge variant="outline" className={`mt-0.5 capitalize ${s.advancePaymentStatus === 'paid' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : s.advancePaymentStatus === 'partially_paid' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-slate-100'}`}>
+                    {s.advancePaymentStatus.replace('_', ' ')}
+                  </Badge>
+                </div>
               </div>
-              <div className="mt-3 flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => shareWhatsapp(s)} className="gap-1.5"><Send className="w-4 h-4" />Share on WhatsApp</Button>
-                <Button size="sm" variant="outline" onClick={() => printFeeSummary(s, month)} className="gap-1.5"><Printer className="w-4 h-4" />Print / PDF</Button>
+
+              <div className="mt-3 flex gap-2 flex-wrap justify-between items-center">
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => shareWhatsapp(s)} className="gap-1.5"><Send className="w-4 h-4" />Share</Button>
+                  <Button size="sm" variant="outline" onClick={() => printFeeSummary(s, month)} className="gap-1.5"><Printer className="w-4 h-4" />Statement</Button>
+                </div>
+                <Button size="sm" onClick={() => setRenewStudent({ id: s.studentId, name: s.studentName, feePerClass: s.feePerClass })} className="gap-1 text-xs">
+                  Renew Class Pack
+                </Button>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {renewStudent && (
+        <RenewPackDialog student={renewStudent} open={!!renewStudent} onClose={() => setRenewStudent(null)} onDone={load} />
+      )}
     </div>
   );
 }
@@ -1191,14 +1413,20 @@ function StudentHome({ onNavigate }) {
 
       <div className="grid grid-cols-2 gap-3">
         <Card><CardContent className="p-4">
-          <div className="text-xs text-muted-foreground uppercase">This Month</div>
-          <div className="text-2xl font-bold mt-1">{data.monthlyCompleted}</div>
-          <div className="text-xs text-muted-foreground">classes attended</div>
+          <div className="text-xs text-muted-foreground uppercase">Classes Attended This Month</div>
+          <div className="text-2xl font-bold mt-1 text-primary">{data.monthlyCompleted}</div>
+          <div className="text-xs text-muted-foreground">resets monthly</div>
         </CardContent></Card>
         <Card><CardContent className="p-4">
-          <div className="text-xs text-muted-foreground uppercase">Fee Status</div>
-          <div className="text-2xl font-bold mt-1 text-emerald-600">{fmtMoney(feeDue)}</div>
-          <div className="text-xs text-muted-foreground">{data.monthlyBillable} billable</div>
+          <div className="text-xs text-muted-foreground uppercase font-medium">Active Class Pack</div>
+          {data.activePack ? (
+            <div>
+              <div className="text-xl font-bold mt-1 text-emerald-600">{data.activePack.remainingClasses} classes left</div>
+              <div className="text-xs text-muted-foreground">{data.activePack.usedClasses} of {data.activePack.totalClasses} used</div>
+            </div>
+          ) : (
+            <div className="text-sm font-semibold text-rose-600 mt-1">No active pack</div>
+          )}
         </CardContent></Card>
       </div>
 
@@ -1370,24 +1598,67 @@ function StudentFees() {
   const [data, setData] = useState(null);
   useEffect(() => { api('/student/dashboard').then(setData).catch(e => toast.error(e.message)); }, []);
   if (!data) return <div className="p-6 text-muted-foreground">Loading...</div>;
-  const due = data.monthlyBillable * (data.feePerClass || 0);
+  const activePack = data.activePack;
+
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Fees</h1>
-      <Card className="bg-gradient-to-br from-emerald-500 to-emerald-700 text-white border-0">
-        <CardContent className="p-6">
-          <div className="text-emerald-100 text-sm">Current month due</div>
-          <div className="text-4xl font-bold mt-1">{fmtMoney(due)}</div>
-          <div className="text-emerald-100 mt-1">{data.monthlyBillable} billable × {fmtMoney(data.feePerClass)}</div>
-        </CardContent>
-      </Card>
+      <h1 className="text-2xl font-bold">Class Pack & Payments</h1>
+      
+      {activePack ? (
+        <Card className="bg-gradient-to-br from-primary to-blue-700 text-white border-0 shadow-lg">
+          <CardContent className="p-6">
+            <div className="flex justify-between items-start">
+              <div>
+                <div className="text-blue-100 text-sm">Active Class Pack</div>
+                <div className="text-4xl font-bold mt-1">{activePack.remainingClasses} <span className="text-xl font-normal text-blue-100">classes left</span></div>
+              </div>
+              <Badge variant="outline" className="bg-white/20 text-white border-white/30 capitalize">
+                {activePack.status}
+              </Badge>
+            </div>
+
+            <div className="mt-4 w-full bg-blue-950/40 rounded-full h-2.5 overflow-hidden">
+              <div className="bg-emerald-400 h-full rounded-full transition-all" style={{ width: `${Math.min(100, (activePack.usedClasses / activePack.totalClasses) * 100)}%` }}></div>
+            </div>
+
+            <div className="mt-4 flex justify-between text-xs text-blue-100 pt-2 border-t border-blue-400/30">
+              <span>Used: <strong>{activePack.usedClasses}</strong> / {activePack.totalClasses}</span>
+              <span>Fee per class: <strong>{fmtMoney(activePack.feePerClassSnapshot)}</strong></span>
+              <span>Pack Total: <strong>{fmtMoney(activePack.totalAmount)}</strong></span>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="bg-rose-50 border-rose-200">
+          <CardContent className="p-6 text-center text-rose-800">
+            <div className="font-semibold text-lg">No Active Class Pack</div>
+            <div className="text-sm mt-1">Please contact your teacher to renew your class pack.</div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card><CardContent className="p-4 space-y-2">
-        <div className="flex justify-between"><span className="text-muted-foreground">Fee per class</span><span className="font-medium">{fmtMoney(data.feePerClass)}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Classes attended this month</span><span className="font-medium">{data.monthlyCompleted}</span></div>
-        <div className="flex justify-between"><span className="text-muted-foreground">Billable classes</span><span className="font-medium">{data.monthlyBillable}</span></div>
-        <Separator />
-        <div className="flex justify-between text-lg"><span className="font-semibold">Total Due</span><span className="font-bold text-emerald-600">{fmtMoney(due)}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground font-medium">Fee per class</span><span className="font-medium">{fmtMoney(data.feePerClass)}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground font-medium">Classes attended this month ({new Date().toLocaleDateString('en-IN', { month: 'short' })})</span><span className="font-medium">{data.monthlyCompleted}</span></div>
+        <div className="flex justify-between"><span className="text-muted-foreground font-medium">Billable classes this month</span><span className="font-medium">{data.monthlyBillable}</span></div>
       </CardContent></Card>
+
+      {data.payments?.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-lg font-semibold">Payment History</h2>
+          <div className="grid gap-2">
+            {data.payments.map(p => (
+              <Card key={p.id}><CardContent className="p-3 flex items-center justify-between text-sm">
+                <div>
+                  <div className="font-semibold">{p.receiptNumber} · {fmtMoney(p.amount)}</div>
+                  <div className="text-xs text-muted-foreground">{new Date(p.paymentDate).toLocaleDateString('en-IN')} via {p.paymentMethod?.toUpperCase()}</div>
+                </div>
+                <Badge variant="outline" className="bg-emerald-100 text-emerald-800 border-emerald-200">Paid</Badge>
+              </CardContent></Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

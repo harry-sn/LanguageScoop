@@ -4,11 +4,13 @@ Backend API tests for Language Scoop - NEW FEATURES ONLY
 Tests file uploads, push notifications, homework attachments, and class reminders
 """
 
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 import os
 import requests
 import json
 import base64
-import sys
 
 # Base URL
 BASE_URL = os.getenv("BASE_URL", "http://localhost:3000/api")
