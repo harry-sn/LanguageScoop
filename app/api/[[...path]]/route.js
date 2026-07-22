@@ -207,6 +207,58 @@ async function ensureSeed() {
   return teacherId;
 }
 
+const ALLOWED_TYPES = {
+  'application/pdf': ['.pdf'],
+  'image/jpeg': ['.jpg', '.jpeg'],
+  'image/png': ['.png'],
+  'image/webp': ['.webp'],
+  'text/plain': ['.txt'],
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx']
+};
+
+function validateUpload(name, type, size, dataUrl) {
+  if (!name || !type || !dataUrl) {
+    return 'Missing required file fields';
+  }
+  if (size > 5 * 1024 * 1024) {
+    return 'File too large (max 5MB)';
+  }
+  const parts = name.split('.');
+  if (parts.length > 2) {
+    return 'Double extensions are not allowed';
+  }
+  if (name.includes('/') || name.includes('\\') || name.includes('..')) {
+    return 'Invalid characters in filename';
+  }
+  const allowedExts = ALLOWED_TYPES[type];
+  if (!allowedExts) {
+    return 'File type not allowed';
+  }
+  const lastDotIdx = name.lastIndexOf('.');
+  if (lastDotIdx === -1) {
+    return 'Missing file extension';
+  }
+  const ext = name.slice(lastDotIdx).toLowerCase();
+  if (!allowedExts.includes(ext)) {
+    return 'Filename extension does not match file type';
+  }
+  const dataUrlPrefix = `data:${type};base64,`;
+  if (!dataUrl.startsWith(dataUrlPrefix)) {
+    return 'MIME type mismatch in file contents';
+  }
+  return null;
+}
+
+function sanitizeFilename(name) {
+  const lastDotIdx = name.lastIndexOf('.');
+  const ext = name.slice(lastDotIdx).toLowerCase();
+  const base = name.slice(0, lastDotIdx);
+  const safeBase = base.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `${safeBase}${ext}`;
+}
+
 // ------------- Route Handlers ----------------
 async function handle(request, context) {
   const database = await getDb();
@@ -257,23 +309,7 @@ async function handle(request, context) {
       return json({ user });
     }
 
-    // PUBLIC file access by UUID (unguessable)
-    if (route.startsWith('files/') && pathParts.length === 2 && method === 'GET') {
-      const id = pathParts[1];
-      const f = await database.collection('files').findOne({ id });
-      if (!f) return json({ error: 'Not found' }, 404);
-      const match = /^data:([^;]+);base64,(.+)$/.exec(f.data);
-      if (!match) return json({ error: 'Invalid file' }, 500);
-      const buffer = Buffer.from(match[2], 'base64');
-      return new NextResponse(buffer, {
-        status: 200,
-        headers: {
-          'Content-Type': f.type || 'application/octet-stream',
-          'Content-Disposition': `inline; filename="${encodeURIComponent(f.name)}"`,
-          'Cache-Control': 'private, max-age=3600',
-        },
-      });
-    }
+
 
     // From here, require auth
     const user = await getAuthUser(request);
@@ -882,17 +918,20 @@ async function handle(request, context) {
     // ---- FILE UPLOADS (stored in MongoDB as base64, max 5MB) ----
     if (route === 'files/upload' && method === 'POST') {
       const { name, type, size, dataUrl } = body;
-      if (!dataUrl || !name) return json({ error: 'Missing file' }, 400);
-      if (size > 5 * 1024 * 1024) return json({ error: 'File too large (max 5MB)' }, 400);
+      const validationError = validateUpload(name, type, size, dataUrl);
+      if (validationError) {
+        return json({ error: validationError }, 400);
+      }
+      const safeName = sanitizeFilename(name);
       const id = uuidv4();
       await database.collection('files').insertOne({
-        id, name, type, size,
+        id, name: safeName, type, size,
         data: dataUrl, // base64 data URL
         uploaderId: user.id,
         uploaderRole: user.role,
         createdAt: new Date().toISOString(),
       });
-      return json({ id, name, type, size, url: `/api/files/${id}` });
+      return json({ id, name: safeName, type, size, url: `/api/files/${id}` });
     }
 
     if (route.startsWith('files/') && pathParts.length === 2 && method === 'GET') {
@@ -906,7 +945,8 @@ async function handle(request, context) {
         status: 200,
         headers: {
           'Content-Type': f.type || 'application/octet-stream',
-          'Content-Disposition': `inline; filename="${encodeURIComponent(f.name)}"`,
+          'Content-Disposition': `attachment; filename="${encodeURIComponent(f.name)}"`,
+          'X-Content-Type-Options': 'nosniff',
           'Cache-Control': 'private, max-age=3600',
         },
       });
