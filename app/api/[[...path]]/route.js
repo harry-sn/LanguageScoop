@@ -637,9 +637,13 @@ async function handle(request, context) {
 
     // ---- AUTH ----
     if (route === 'auth/register' && method === 'POST') {
-      const { email, password, name, academyName } = body;
-      if (!email || !password || !name) return json({ error: 'Missing fields' }, 400);
-      const exists = await database.collection('users').findOne({ email });
+      const rawEmail = body.email || '';
+      const password = body.password || '';
+      const name = body.name || '';
+      const academyName = body.academyName || '';
+      if (!rawEmail || !password || !name) return json({ error: 'Missing fields' }, 400);
+      const email = rawEmail.trim().toLowerCase();
+      const exists = await database.collection('users').findOne({ email: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       if (exists) return json({ error: 'Email already registered' }, 400);
       const id = uuidv4();
       const hashed = await bcrypt.hash(password, 10);
@@ -652,8 +656,10 @@ async function handle(request, context) {
     }
 
     if (route === 'auth/login' && method === 'POST') {
-      const { email, password } = body;
-      const user = await database.collection('users').findOne({ email });
+      const rawEmail = body.email || '';
+      const password = body.password || '';
+      const email = rawEmail.trim().toLowerCase();
+      const user = await database.collection('users').findOne({ email: { $regex: `^${email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       if (!user) return json({ error: 'Invalid credentials' }, 401);
       const ok = await bcrypt.compare(password, user.password);
       if (!ok) return json({ error: 'Invalid credentials' }, 401);
@@ -692,9 +698,9 @@ async function handle(request, context) {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
       const b = body;
       const sUserId = uuidv4();
-      let studentEmail = b.email;
+      let studentEmail = (b.email || '').trim().toLowerCase();
       if (studentEmail) {
-        const existingU = await database.collection('users').findOne({ email: studentEmail });
+        const existingU = await database.collection('users').findOne({ email: { $regex: `^${studentEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
         if (existingU) return json({ error: 'Student email already registered' }, 400);
       }
       const tempPw = b.password || 'demo1234';
@@ -917,9 +923,21 @@ async function handle(request, context) {
       if (student.userId) {
         await database.collection('users').updateOne({ id: student.userId }, { $set: { password: hashed, updatedAt: new Date().toISOString() } });
       } else if (student.email) {
-        await database.collection('users').updateOne({ email: student.email }, { $set: { password: hashed, updatedAt: new Date().toISOString() } });
+        const studentEmail = student.email.trim().toLowerCase();
+        const existingU = await database.collection('users').findOne({ email: { $regex: `^${studentEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+        if (existingU) {
+          await database.collection('users').updateOne({ id: existingU.id }, { $set: { password: hashed, updatedAt: new Date().toISOString() } });
+          await database.collection('students').updateOne({ id: student.id }, { $set: { userId: existingU.id } });
+        } else {
+          const sUserId = uuidv4();
+          await database.collection('users').insertOne({
+            id: sUserId, email: studentEmail, password: hashed, role: 'student',
+            name: student.name, teacherId: user.id, createdAt: new Date().toISOString(),
+          });
+          await database.collection('students').updateOne({ id: student.id }, { $set: { userId: sUserId } });
+        }
       } else {
-        return json({ error: 'Student has no linked login email or user account' }, 400);
+        return json({ error: 'Student has no email address associated with their profile' }, 400);
       }
 
       return json({ ok: true, message: 'Student password reset successfully' });
