@@ -938,6 +938,46 @@ async function handle(request, context) {
       const id = pathParts[1];
       const f = await database.collection('files').findOne({ id });
       if (!f) return json({ error: 'Not found' }, 404);
+
+      let isAuthorized = false;
+      if (f.uploaderId === user.id) {
+        isAuthorized = true;
+      } else if (user.role === 'teacher') {
+        const studentOwner = await database.collection('students').findOne({ userId: f.uploaderId });
+        if (studentOwner && studentOwner.teacherId === user.id) {
+          isAuthorized = true;
+        } else {
+          const hw = await database.collection('homework').findOne({
+            teacherId: user.id,
+            $or: [
+              { 'attachments.id': f.id },
+              { 'submissionAttachments.id': f.id }
+            ]
+          });
+          if (hw) isAuthorized = true;
+        }
+      } else if (user.role === 'student') {
+        const studentProfile = await database.collection('students').findOne({ userId: user.id });
+        if (studentProfile) {
+          if (f.uploaderRole === 'teacher' && f.uploaderId === studentProfile.teacherId) {
+            isAuthorized = true;
+          } else {
+            const hw = await database.collection('homework').findOne({
+              studentId: studentProfile.id,
+              $or: [
+                { 'attachments.id': f.id },
+                { 'submissionAttachments.id': f.id }
+              ]
+            });
+            if (hw) isAuthorized = true;
+          }
+        }
+      }
+
+      if (!isAuthorized) {
+        return json({ error: 'Forbidden' }, 403);
+      }
+
       const match = /^data:([^;]+);base64,(.+)$/.exec(f.data);
       if (!match) return json({ error: 'Invalid file' }, 500);
       const buffer = Buffer.from(match[2], 'base64');

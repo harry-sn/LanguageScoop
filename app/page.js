@@ -164,13 +164,38 @@ function FileUploader({ attachments = [], onChange, disabled = false }) {
     return <FileText className="w-4 h-4" />;
   };
 
+  const handleDownload = async (e, a) => {
+    e.preventDefault();
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('cf_token') : null;
+      const headers = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`/api/files/${a.id}`, { headers });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to download file');
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = a.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   return (
     <div className="space-y-2">
       {attachments.length > 0 && (
         <div className="space-y-1">
           {attachments.map(a => (
             <div key={a.id} className="flex items-center justify-between p-2 bg-slate-50 rounded text-sm">
-              <a href={`/api/files/${a.id}`} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-primary hover:underline truncate">
+              <a href="#" onClick={(e) => handleDownload(e, a)} className="flex items-center gap-2 text-primary hover:underline truncate">
                 {fileIcon(a.type)}<span className="truncate">{a.name}</span>
                 <span className="text-xs text-muted-foreground">({(a.size/1024).toFixed(0)} KB)</span>
               </a>
@@ -182,8 +207,8 @@ function FileUploader({ attachments = [], onChange, disabled = false }) {
       {!disabled && (
         <label className={`flex items-center gap-2 p-2 border-2 border-dashed rounded cursor-pointer hover:bg-slate-50 text-sm text-slate-600 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
           <Paperclip className="w-4 h-4" />
-          <span>{uploading ? 'Uploading...' : 'Attach file (PDF, image, audio, max 5MB)'}</span>
-          <input type="file" className="hidden" accept="application/pdf,image/*,audio/*,.doc,.docx,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
+          <span>{uploading ? 'Uploading...' : 'Attach file (PDF, image, document, max 5MB)'}</span>
+          <input type="file" className="hidden" accept="application/pdf,image/jpeg,image/png,image/webp,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
         </label>
       )}
     </div>
