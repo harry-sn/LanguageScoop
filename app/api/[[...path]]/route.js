@@ -3,10 +3,33 @@ import { MongoClient } from 'mongodb';
 import { v4 as uuidv4 } from 'uuid';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import webpush from 'web-push';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'classeflow';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+}
+
+async function sendPushToUser(database, userId, payload) {
+  const subs = await database.collection('push_subscriptions').find({ userId }).toArray();
+  const body = JSON.stringify(payload);
+  await Promise.all(subs.map(async (sub) => {
+    try {
+      await webpush.sendNotification(sub.subscription, body);
+    } catch (e) {
+      if (e.statusCode === 404 || e.statusCode === 410) {
+        await database.collection('push_subscriptions').deleteOne({ _id: sub._id });
+      }
+    }
+  }));
+}
 
 let client;
 let db;
@@ -232,6 +255,24 @@ async function handle(request, context) {
       const user = await getAuthUser(request);
       if (!user) return json({ error: 'Unauthorized' }, 401);
       return json({ user });
+    }
+
+    // PUBLIC file access by UUID (unguessable)
+    if (route.startsWith('files/') && pathParts.length === 2 && method === 'GET') {
+      const id = pathParts[1];
+      const f = await database.collection('files').findOne({ id });
+      if (!f) return json({ error: 'Not found' }, 404);
+      const match = /^data:([^;]+);base64,(.+)$/.exec(f.data);
+      if (!match) return json({ error: 'Invalid file' }, 500);
+      const buffer = Buffer.from(match[2], 'base64');
+      return new NextResponse(buffer, {
+        status: 200,
+        headers: {
+          'Content-Type': f.type || 'application/octet-stream',
+          'Content-Disposition': `inline; filename="${encodeURIComponent(f.name)}"`,
+          'Cache-Control': 'private, max-age=3600',
+        },
+      });
     }
 
     // From here, require auth
@@ -530,12 +571,25 @@ async function handle(request, context) {
         instructions: b.instructions || '',
         dueDate: b.dueDate ? new Date(b.dueDate).toISOString() : null,
         status: 'assigned',
+        attachments: b.attachments || [],
         submissionText: '',
+        submissionAttachments: [],
         feedback: '',
         score: null,
         createdAt: new Date().toISOString(),
       };
       await database.collection('homework').insertOne(doc);
+      // Push notification to student
+      if (student.userId) {
+        try {
+          await sendPushToUser(database, student.userId, {
+            title: '📚 New homework assigned',
+            body: `${doc.title}${doc.dueDate ? ` · Due ${new Date(doc.dueDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : ''}`,
+            url: '/',
+            tag: `homework-${doc.id}`,
+          });
+        } catch (e) {}
+      }
       return json({ homework: doc });
     }
 
@@ -545,8 +599,17 @@ async function handle(request, context) {
       const student = await database.collection('students').findOne({ userId: user.id });
       const hw = await database.collection('homework').findOne({ id });
       if (!hw || hw.studentId !== student.id) return json({ error: 'Not found' }, 404);
-      await database.collection('homework').updateOne({ id }, { $set: { submissionText: body.submissionText || '', status: 'submitted', submittedAt: new Date().toISOString() } });
+      await database.collection('homework').updateOne({ id }, { $set: { submissionText: body.submissionText || '', submissionAttachments: body.submissionAttachments || [], status: 'submitted', submittedAt: new Date().toISOString() } });
       const updated = await database.collection('homework').findOne({ id });
+      // Notify teacher
+      try {
+        await sendPushToUser(database, hw.teacherId, {
+          title: '✅ Homework submitted',
+          body: `${student.name} submitted: ${hw.title}`,
+          url: '/',
+          tag: `hw-sub-${hw.id}`,
+        });
+      } catch (e) {}
       return json({ homework: updated });
     }
 
@@ -557,6 +620,18 @@ async function handle(request, context) {
       if (!hw || hw.teacherId !== user.id) return json({ error: 'Not found' }, 404);
       await database.collection('homework').updateOne({ id }, { $set: { feedback: body.feedback || '', score: body.score ?? null, status: 'reviewed' } });
       const updated = await database.collection('homework').findOne({ id });
+      // Notify student
+      const student = await database.collection('students').findOne({ id: hw.studentId });
+      if (student && student.userId) {
+        try {
+          await sendPushToUser(database, student.userId, {
+            title: '⭐ Feedback received',
+            body: `${hw.title}${body.score != null ? ` · Score: ${body.score}` : ''}`,
+            url: '/',
+            tag: `hw-fb-${hw.id}`,
+          });
+        } catch (e) {}
+      }
       return json({ homework: updated });
     }
 
@@ -752,6 +827,89 @@ async function handle(request, context) {
       const totalDue = billable * (student.feePerClass || 0);
       const paid = payments.reduce((s, p) => s + p.amount, 0);
       return json({ student, teacher: { name: teacher?.name, academyName: teacher?.academyName }, month: monthStr, classes, payments, billable, totalDue, paid, balance: totalDue - paid });
+    }
+
+    // ---- PUSH NOTIFICATIONS ----
+    if (route === 'push/subscribe' && method === 'POST') {
+      const { subscription } = body;
+      if (!subscription || !subscription.endpoint) return json({ error: 'Invalid subscription' }, 400);
+      await database.collection('push_subscriptions').replaceOne(
+        { userId: user.id, 'subscription.endpoint': subscription.endpoint },
+        { userId: user.id, role: user.role, subscription, createdAt: new Date().toISOString() },
+        { upsert: true }
+      );
+      // Send a welcome test notification
+      try {
+        await sendPushToUser(database, user.id, { title: 'Notifications enabled 🔔', body: 'You\u2019ll get reminders before classes and when homework is assigned.', url: '/' });
+      } catch (e) {}
+      return json({ ok: true });
+    }
+
+    if (route === 'push/unsubscribe' && method === 'POST') {
+      const { endpoint } = body;
+      await database.collection('push_subscriptions').deleteOne({ userId: user.id, 'subscription.endpoint': endpoint });
+      return json({ ok: true });
+    }
+
+    if (route === 'push/status' && method === 'GET') {
+      const count = await database.collection('push_subscriptions').countDocuments({ userId: user.id });
+      return json({ enabled: count > 0, count });
+    }
+
+    if (route === 'push/test' && method === 'POST') {
+      await sendPushToUser(database, user.id, { title: 'Language Scoop test 🔔', body: 'Push notifications are working perfectly!', url: '/' });
+      return json({ ok: true });
+    }
+
+    // Teacher can send reminder to specific student
+    if (route.startsWith('classes/') && pathParts[2] === 'remind' && method === 'POST') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const id = pathParts[1];
+      const cls = await database.collection('classes').findOne({ id });
+      if (!cls || cls.teacherId !== user.id) return json({ error: 'Not found' }, 404);
+      const student = await database.collection('students').findOne({ id: cls.studentId });
+      if (!student || !student.userId) return json({ error: 'Student has no account' }, 404);
+      const timeStr = new Date(cls.startTime).toLocaleString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, day: 'numeric', month: 'short' });
+      await sendPushToUser(database, student.userId, {
+        title: `Class reminder: ${cls.topic || 'French class'}`,
+        body: `Your class is at ${timeStr}${cls.meetingLink ? ' — tap to join Zoom' : ''}`,
+        url: '/',
+        tag: `class-${cls.id}`,
+      });
+      return json({ ok: true });
+    }
+
+    // ---- FILE UPLOADS (stored in MongoDB as base64, max 5MB) ----
+    if (route === 'files/upload' && method === 'POST') {
+      const { name, type, size, dataUrl } = body;
+      if (!dataUrl || !name) return json({ error: 'Missing file' }, 400);
+      if (size > 5 * 1024 * 1024) return json({ error: 'File too large (max 5MB)' }, 400);
+      const id = uuidv4();
+      await database.collection('files').insertOne({
+        id, name, type, size,
+        data: dataUrl, // base64 data URL
+        uploaderId: user.id,
+        uploaderRole: user.role,
+        createdAt: new Date().toISOString(),
+      });
+      return json({ id, name, type, size, url: `/api/files/${id}` });
+    }
+
+    if (route.startsWith('files/') && pathParts.length === 2 && method === 'GET') {
+      const id = pathParts[1];
+      const f = await database.collection('files').findOne({ id });
+      if (!f) return json({ error: 'Not found' }, 404);
+      const match = /^data:([^;]+);base64,(.+)$/.exec(f.data);
+      if (!match) return json({ error: 'Invalid file' }, 500);
+      const buffer = Buffer.from(match[2], 'base64');
+      return new NextResponse(buffer, {
+        status: 200,
+        headers: {
+          'Content-Type': f.type || 'application/octet-stream',
+          'Content-Disposition': `inline; filename="${encodeURIComponent(f.name)}"`,
+          'Cache-Control': 'private, max-age=3600',
+        },
+      });
     }
 
     // ---- DASHBOARD (teacher) ----

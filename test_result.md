@@ -101,3 +101,168 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Language Scoop - French tutoring management app with student portal, homework, practice exercises, and push notifications"
+
+backend:
+  - task: "File upload API - POST /api/files/upload"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ File upload working correctly. Successfully uploads files with base64 encoding, returns file ID and URL. Tested with small file (< 5MB)."
+  
+  - task: "File upload size validation (reject > 5MB)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ File size validation working correctly. Files larger than 5MB are rejected with 400 status code."
+  
+  - task: "File download API - GET /api/files/:id (public access)"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ File download working correctly. Public access (no auth required) returns file with correct Content-Type header. Tested with text/plain file."
+  
+  - task: "Push notifications - GET /api/push/status"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Push status endpoint working correctly. Returns {enabled: false, count: 0} initially, updates correctly after subscription."
+  
+  - task: "Push notifications - POST /api/push/subscribe"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Push subscription working correctly. Accepts subscription object with endpoint and keys, returns {ok: true}. Sends welcome notification."
+  
+  - task: "Push notifications - POST /api/push/test"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Push test notification working correctly. Returns {ok: true}. Actual delivery may fail with mock endpoints but API doesn't crash."
+  
+  - task: "Push notifications - POST /api/push/unsubscribe"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Push unsubscribe working correctly. Removes subscription by endpoint, returns {ok: true}."
+  
+  - task: "Homework with attachments - POST /api/homework"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Homework creation with attachments working correctly. Accepts attachments array with file metadata, stores in MongoDB, sends push notification to student."
+  
+  - task: "Homework submission with attachments - POST /api/homework/:id/submit"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Homework submission with attachments working correctly. Student can submit with submissionAttachments array, sends push notification to teacher."
+  
+  - task: "Homework GET with attachments verification"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Homework retrieval with attachments working correctly. GET /api/homework returns both teacher attachments and student submissionAttachments."
+  
+  - task: "Class reminder push - POST /api/classes/:id/remind"
+    implemented: true
+    working: true
+    file: "app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "✅ Class reminder push working correctly. Teacher can send reminder to student, returns {ok: true}. Requires valid class ID and teacher auth."
+
+frontend:
+  - task: "Frontend testing not performed"
+    implemented: true
+    working: "NA"
+    file: "N/A"
+    stuck_count: 0
+    priority: "low"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "testing"
+        comment: "Frontend testing was not requested in this test cycle. Only backend API testing was performed."
+
+metadata:
+  created_by: "testing_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "All new features tested and passing"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "testing"
+    message: "Backend testing complete. All 16 tests passed successfully. New features (file uploads, push notifications, homework attachments, class reminders) are working correctly. No critical issues found."

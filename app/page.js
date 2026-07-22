@@ -17,7 +17,8 @@ import {
   LayoutDashboard, Users, CalendarDays, ClipboardList, BookOpen, IndianRupee,
   Video, MapPin, Copy, LogOut, Plus, GraduationCap, Clock,
   CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send,
-  Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X
+  Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X,
+  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music
 } from 'lucide-react';
 
 const API = '/api';
@@ -57,6 +58,138 @@ function useCountdown(targetIso) {
 }
 
 // -------- Landing Page --------
+// -------- Push Notification Helpers --------
+const urlBase64ToUint8Array = (base64String) => {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+};
+
+function NotificationButton() {
+  const [status, setStatus] = useState('idle'); // idle | enabled | denied | unsupported
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setStatus('unsupported'); return;
+    }
+    if (Notification.permission === 'denied') setStatus('denied');
+    api('/push/status').then(d => { if (d.enabled) setStatus('enabled'); }).catch(() => {});
+  }, []);
+
+  const enable = async () => {
+    setLoading(true);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { toast.error('Notification permission denied'); setStatus('denied'); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BHMt5Wz0xG7fxG-HHGrtY_6Bj9D4GUDs5VhIQK8HkoE2EmSiqP3QyfQbh60y1DdbXK2oFw83ndDGxpI3eqaQ6e0';
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(vapid),
+      });
+      await api('/push/subscribe', { method: 'POST', body: { subscription } });
+      setStatus('enabled');
+      toast.success('Notifications enabled! Watch for the test notification.');
+    } catch (e) { toast.error(e.message || 'Failed to enable'); } finally { setLoading(false); }
+  };
+
+  const disable = async () => {
+    setLoading(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await api('/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+        await sub.unsubscribe();
+      }
+      setStatus('idle');
+      toast.success('Notifications disabled');
+    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+
+  const test = async () => {
+    try { await api('/push/test', { method: 'POST' }); toast.success('Test sent — check for the notification'); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  if (status === 'unsupported') return null;
+
+  if (status === 'enabled') {
+    return (
+      <div className="flex gap-1">
+        <Button size="sm" variant="outline" onClick={test} className="gap-1.5"><Bell className="w-4 h-4 text-emerald-600" />On</Button>
+        <Button size="icon" variant="ghost" onClick={disable} disabled={loading} title="Disable notifications"><BellOff className="w-4 h-4" /></Button>
+      </div>
+    );
+  }
+
+  return (
+    <Button size="sm" variant="outline" onClick={enable} disabled={loading || status === 'denied'} className="gap-1.5">
+      <Bell className="w-4 h-4" />
+      {status === 'denied' ? 'Blocked' : 'Enable Alerts'}
+    </Button>
+  );
+}
+
+// -------- File Upload --------
+function FileUploader({ attachments = [], onChange, disabled = false }) {
+  const [uploading, setUploading] = useState(false);
+
+  const upload = async (file) => {
+    if (file.size > 5 * 1024 * 1024) { toast.error('File too large (max 5MB)'); return; }
+    setUploading(true);
+    try {
+      const reader = new FileReader();
+      const dataUrl = await new Promise((resolve, reject) => {
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await api('/files/upload', { method: 'POST', body: { name: file.name, type: file.type, size: file.size, dataUrl } });
+      onChange([...attachments, res]);
+      toast.success('File uploaded');
+    } catch (e) { toast.error(e.message); } finally { setUploading(false); }
+  };
+
+  const remove = (id) => onChange(attachments.filter(a => a.id !== id));
+
+  const fileIcon = (type) => {
+    if (type?.startsWith('image/')) return <ImageIcon className="w-4 h-4" />;
+    if (type?.startsWith('audio/')) return <Music className="w-4 h-4" />;
+    return <FileText className="w-4 h-4" />;
+  };
+
+  return (
+    <div className="space-y-2">
+      {attachments.length > 0 && (
+        <div className="space-y-1">
+          {attachments.map(a => (
+            <div key={a.id} className="flex items-center justify-between p-2 bg-slate-50 rounded text-sm">
+              <a href={`/api/files/${a.id}`} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-primary hover:underline truncate">
+                {fileIcon(a.type)}<span className="truncate">{a.name}</span>
+                <span className="text-xs text-muted-foreground">({(a.size/1024).toFixed(0)} KB)</span>
+              </a>
+              {!disabled && <Button size="icon" variant="ghost" onClick={() => remove(a.id)}><X className="w-3.5 h-3.5" /></Button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {!disabled && (
+        <label className={`flex items-center gap-2 p-2 border-2 border-dashed rounded cursor-pointer hover:bg-slate-50 text-sm text-slate-600 ${uploading ? 'opacity-50 pointer-events-none' : ''}`}>
+          <Paperclip className="w-4 h-4" />
+          <span>{uploading ? 'Uploading...' : 'Attach file (PDF, image, audio, max 5MB)'}</span>
+          <input type="file" className="hidden" accept="application/pdf,image/*,audio/*,.doc,.docx,.txt" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
+        </label>
+      )}
+    </div>
+  );
+}
+
 function LandingPage({ onSignIn }) {
   const [installEvent, setInstallEvent] = useState(null);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
@@ -859,7 +992,7 @@ function HomeworkPage() {
   const [students, setStudents] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [review, setReview] = useState(null);
-  const [form, setForm] = useState({ studentId: '', title: '', instructions: '', dueDate: '' });
+  const [form, setForm] = useState({ studentId: '', title: '', instructions: '', dueDate: '', attachments: [] });
 
   const load = async () => {
     try {
@@ -870,7 +1003,7 @@ function HomeworkPage() {
   useEffect(() => { load(); }, []);
 
   const create = async () => {
-    try { await api('/homework', { method: 'POST', body: form }); toast.success('Homework assigned'); setShowAdd(false); setForm({ studentId: '', title: '', instructions: '', dueDate: '' }); load(); }
+    try { await api('/homework', { method: 'POST', body: form }); toast.success('Homework assigned'); setShowAdd(false); setForm({ studentId: '', title: '', instructions: '', dueDate: '', attachments: [] }); load(); }
     catch (e) { toast.error(e.message); }
   };
 
@@ -909,10 +1042,16 @@ function HomeworkPage() {
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">{stud?.name || 'Student'} · Due {h.dueDate ? fmtDate(h.dueDate) : '—'}</div>
                     {h.instructions && <p className="text-sm mt-2">{h.instructions}</p>}
+                    {h.attachments?.length > 0 && (
+                      <div className="mt-2"><div className="text-xs text-muted-foreground mb-1">Attachments:</div><FileUploader attachments={h.attachments} onChange={() => {}} disabled /></div>
+                    )}
                     {h.submissionText && (
                       <div className="mt-2 p-3 bg-slate-50 rounded text-sm">
                         <div className="text-xs text-muted-foreground mb-1">Submission:</div>{h.submissionText}
                       </div>
+                    )}
+                    {h.submissionAttachments?.length > 0 && (
+                      <div className="mt-2"><div className="text-xs text-muted-foreground mb-1">Student uploaded:</div><FileUploader attachments={h.submissionAttachments} onChange={() => {}} disabled /></div>
                     )}
                     {h.feedback && (
                       <div className="mt-2 p-3 bg-emerald-50 rounded text-sm">
@@ -944,6 +1083,7 @@ function HomeworkPage() {
             <div className="space-y-1"><Label>Title</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Practice greetings" /></div>
             <div className="space-y-1"><Label>Instructions</Label><Textarea value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} rows={4} /></div>
             <div className="space-y-1"><Label>Due Date</Label><Input type="datetime-local" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} /></div>
+            <div className="space-y-1"><Label>Attachments</Label><FileUploader attachments={form.attachments} onChange={(a) => setForm({ ...form, attachments: a })} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
@@ -1096,14 +1236,15 @@ function StudentHomework() {
   const [items, setItems] = useState([]);
   const [selected, setSelected] = useState(null);
   const [submissionText, setSubmissionText] = useState('');
+  const [submissionAttachments, setSubmissionAttachments] = useState([]);
 
   const load = async () => { try { const d = await api('/homework'); setItems(d.homework); } catch (e) { toast.error(e.message); } };
   useEffect(() => { load(); }, []);
 
   const submit = async () => {
     try {
-      await api(`/homework/${selected.id}/submit`, { method: 'POST', body: { submissionText } });
-      toast.success('Homework submitted!'); setSelected(null); setSubmissionText(''); load();
+      await api(`/homework/${selected.id}/submit`, { method: 'POST', body: { submissionText, submissionAttachments } });
+      toast.success('Homework submitted!'); setSelected(null); setSubmissionText(''); setSubmissionAttachments([]); load();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -1118,7 +1259,7 @@ function StudentHomework() {
       <h1 className="text-2xl font-bold">Homework</h1>
       <div className="grid gap-3">
         {items.length === 0 ? <Card><CardContent className="p-8 text-center text-muted-foreground">No homework yet. 🎉</CardContent></Card> : items.map(h => (
-          <Card key={h.id} className="cursor-pointer hover:shadow-md" onClick={() => { setSelected(h); setSubmissionText(h.submissionText || ''); }}>
+          <Card key={h.id} className="cursor-pointer hover:shadow-md" onClick={() => { setSelected(h); setSubmissionText(h.submissionText || ''); setSubmissionAttachments(h.submissionAttachments || []); }}>
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -1138,14 +1279,21 @@ function StudentHomework() {
       </div>
 
       <Dialog open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{selected?.title}</DialogTitle><DialogDescription>Due {selected?.dueDate ? fmtDate(selected.dueDate) : '—'}</DialogDescription></DialogHeader>
           {selected && (
             <div className="space-y-3">
               <div className="text-sm p-3 bg-slate-50 rounded">{selected.instructions}</div>
+              {selected.attachments?.length > 0 && (
+                <div><Label className="text-xs">Teacher's attachments</Label><FileUploader attachments={selected.attachments} onChange={() => {}} disabled /></div>
+              )}
               <div className="space-y-1">
                 <Label>Your submission</Label>
-                <Textarea value={submissionText} onChange={(e) => setSubmissionText(e.target.value)} rows={6} disabled={selected.status === 'reviewed'} placeholder="Type your answer here..." />
+                <Textarea value={submissionText} onChange={(e) => setSubmissionText(e.target.value)} rows={5} disabled={selected.status === 'reviewed'} placeholder="Type your answer here..." />
+              </div>
+              <div className="space-y-1">
+                <Label>Attach files (optional)</Label>
+                <FileUploader attachments={submissionAttachments.length ? submissionAttachments : (selected.submissionAttachments || [])} onChange={setSubmissionAttachments} disabled={selected.status === 'reviewed'} />
               </div>
               {selected.feedback && (
                 <div className="p-3 bg-emerald-50 rounded text-sm">
@@ -1156,7 +1304,7 @@ function StudentHomework() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelected(null)}>Close</Button>
-            {selected?.status !== 'reviewed' && <Button onClick={submit} disabled={!submissionText.trim()}>{selected?.status === 'submitted' ? 'Resubmit' : 'Submit'}</Button>}
+            {selected?.status !== 'reviewed' && <Button onClick={submit} disabled={!submissionText.trim() && submissionAttachments.length === 0}>{selected?.status === 'submitted' ? 'Resubmit' : 'Submit'}</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1804,6 +1952,7 @@ function App() {
               <div className="text-xs text-muted-foreground truncate">{user.email}</div>
             </div>
           </div>
+          <NotificationButton />
           <Button variant="outline" size="sm" onClick={logout} className="w-full gap-1.5"><LogOut className="w-3.5 h-3.5" />Sign out</Button>
         </div>
       </aside>
@@ -1814,7 +1963,10 @@ function App() {
             <div className="w-8 h-8 rounded-lg bg-white ring-1 ring-slate-200 flex items-center justify-center overflow-hidden"><img src="/logo.png" alt="LS" className="w-6 h-6 object-contain" /></div>
             <div className="font-bold">Language Scoop</div>
           </div>
-          <Button variant="ghost" size="sm" onClick={logout}><LogOut className="w-4 h-4" /></Button>
+          <div className="flex items-center gap-1">
+            <NotificationButton />
+            <Button variant="ghost" size="sm" onClick={logout}><LogOut className="w-4 h-4" /></Button>
+          </div>
         </header>
 
         <div className="flex-1 p-4 md:p-6 pb-24 md:pb-6 overflow-y-auto">
