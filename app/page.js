@@ -18,7 +18,7 @@ import {
   Video, MapPin, Copy, LogOut, Plus, GraduationCap, Clock,
   CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send,
   Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X, MoreHorizontal,
-  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music, Lock
+  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music, Lock, Globe
 } from 'lucide-react';
 
 const API = '/api';
@@ -33,9 +33,78 @@ async function api(path, opts = {}) {
   return data;
 }
 
-const fmtTime = (iso) => new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
-const fmtDate = (iso) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
-const fmtDateLong = (iso) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
+const TIMEZONES = [
+  { value: 'Asia/Kolkata', label: 'India (IST - UTC+5:30)' },
+  { value: 'Europe/Paris', label: 'France / EU (CEST/CET - UTC+2/+1)' },
+  { value: 'Europe/London', label: 'UK (BST/GMT - UTC+1/+0)' },
+  { value: 'America/New_York', label: 'US East (EDT/EST - UTC-4/-5)' },
+  { value: 'America/Chicago', label: 'US Central (CDT/CST - UTC-5/-6)' },
+  { value: 'America/Denver', label: 'US Mountain (MDT/MST - UTC-6/-7)' },
+  { value: 'America/Los_Angeles', label: 'US West (PDT/PST - UTC-7/-8)' },
+  { value: 'Asia/Dubai', label: 'UAE (GST - UTC+4)' },
+  { value: 'Asia/Singapore', label: 'Singapore (SGT - UTC+8)' },
+  { value: 'Australia/Sydney', label: 'Australia East (AEST - UTC+10)' },
+  { value: 'UTC', label: 'UTC (Coordinated Universal Time)' },
+];
+
+const getBrowserTimezone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata'; } catch (e) { return 'Asia/Kolkata'; }
+};
+
+const fmtTime = (iso, timeZone = null) => {
+  if (!iso) return '';
+  const tz = timeZone || getBrowserTimezone();
+  try {
+    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
+  } catch (e) {
+    return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+};
+
+const fmtDate = (iso, timeZone = null) => {
+  if (!iso) return '';
+  const tz = timeZone || getBrowserTimezone();
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', timeZone: tz });
+  } catch (e) {
+    return new Date(iso).toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+};
+
+const fmtDateLong = (iso, timeZone = null) => {
+  if (!iso) return '';
+  const tz = timeZone || getBrowserTimezone();
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: tz });
+  } catch (e) {
+    return new Date(iso).toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  }
+};
+
+function localTimeToUtcIso(dateStr, timeStr, timeZone) {
+  if (!dateStr || !timeStr) return new Date().toISOString();
+  const tz = timeZone || getBrowserTimezone();
+  const dummy = new Date(dateStr + 'T' + timeStr + ':00Z');
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false
+    });
+    const parts = formatter.formatToParts(dummy);
+    const p = {};
+    parts.forEach(({ type, value }) => { p[type] = value; });
+    let hour = parseInt(p.hour, 10);
+    if (hour === 24) hour = 0;
+    const tzDate = new Date(Date.UTC(p.year, p.month - 1, p.day, hour, p.minute, p.second));
+    const offsetMs = dummy.getTime() - tzDate.getTime();
+    return new Date(dummy.getTime() + offsetMs).toISOString();
+  } catch (e) {
+    return new Date(dateStr + 'T' + timeStr).toISOString();
+  }
+}
+
 const fmtMoney = (n) => `₹${(n || 0).toLocaleString('en-IN')}`;
 const initials = (name = '') => name.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
 
@@ -452,10 +521,14 @@ function LoginScreen({ onLogin, onBack }) {
   );
 }
 
-function ClassCard({ cls, isStudent = false, onMarkAttendance }) {
+function ClassCard({ cls, onMarkAttendance, isStudent }) {
   const countdown = useCountdown(cls.startTime);
   const isUpcoming = new Date(cls.startTime) > new Date();
-  const isPast = new Date(cls.endTime) < new Date();
+  const isPast = new Date(cls.endTime || cls.startTime) < new Date();
+
+  const teacherTz = getBrowserTimezone();
+  const studentTz = cls.studentTimezone || cls.timezone || 'Asia/Kolkata';
+
   const statusColor = {
     completed: 'bg-emerald-100 text-emerald-800 border-emerald-200',
     absent: 'bg-orange-100 text-orange-800 border-orange-200',
@@ -467,7 +540,8 @@ function ClassCard({ cls, isStudent = false, onMarkAttendance }) {
   const copyLink = () => { navigator.clipboard.writeText(cls.meetingLink); toast.success('Link copied'); };
   const openMeeting = () => window.open(cls.meetingLink, '_blank');
   const notifyStudent = () => {
-    const message = `Hi ${cls.studentName}, your French class is scheduled for ${fmtDate(cls.startTime)} at ${fmtTime(cls.startTime)}.${cls.meetingLink ? `\n\nJoin: ${cls.meetingLink}` : ''}${cls.meetingId ? `\nMeeting ID: ${cls.meetingId}` : ''}${cls.passcode ? `\nPasscode: ${cls.passcode}` : ''}`;
+    const studentTimeText = studentTz !== teacherTz ? `${fmtTime(cls.startTime, studentTz)} (${studentTz.split('/')[1]?.replace('_', ' ') || studentTz})` : fmtTime(cls.startTime, studentTz);
+    const message = `Hi ${cls.studentName}, your French class is scheduled for ${fmtDate(cls.startTime, studentTz)} at ${studentTimeText}.${cls.meetingLink ? `\n\nJoin: ${cls.meetingLink}` : ''}${cls.meetingId ? `\nMeeting ID: ${cls.meetingId}` : ''}${cls.passcode ? `\nPasscode: ${cls.passcode}` : ''}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
   };
 
@@ -475,7 +549,15 @@ function ClassCard({ cls, isStudent = false, onMarkAttendance }) {
     <Card className="hover:shadow-md transition-shadow">
       <CardContent className="p-4">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-lg font-semibold">{fmtTime(cls.startTime)}</span>
+          <span className="text-lg font-semibold">
+            {isStudent ? fmtTime(cls.startTime, studentTz) : fmtTime(cls.startTime, teacherTz)}
+          </span>
+          {!isStudent && studentTz && studentTz !== teacherTz && (
+            <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 gap-1 text-xs font-normal">
+              <Globe className="w-3 h-3" />
+              {fmtTime(cls.startTime, studentTz)} ({studentTz.split('/')[1]?.replace('_', ' ') || studentTz})
+            </Badge>
+          )}
           <Badge variant="outline" className={statusColor}>
             {cls.status === 'upcoming' && isPast ? 'Attendance Pending' : cls.status.charAt(0).toUpperCase() + cls.status.slice(1)}
           </Badge>
@@ -917,7 +999,7 @@ function StudentsPage() {
   const [selected, setSelected] = useState(null);
   const [renewStudent, setRenewStudent] = useState(null);
   const [resetStudent, setResetStudent] = useState(null);
-  const empty = { name: '', email: '', phone: '', parentName: '', parentPhone: '', level: 'A1', mode: 'online', feePerClass: 800, defaultPackSize: 8, paymentAmount: 6400, defaultDuration: 60, permanentMeetingLink: '', permanentMeetingId: '', permanentMeetingPasscode: '', classroomLocation: '', notes: '' };
+  const empty = { name: '', email: '', phone: '', parentName: '', parentPhone: '', level: 'A1', mode: 'online', feePerClass: 800, defaultPackSize: 8, paymentAmount: 6400, defaultDuration: 60, timezone: 'Asia/Kolkata', permanentMeetingLink: '', permanentMeetingId: '', permanentMeetingPasscode: '', classroomLocation: '', notes: '' };
   const [form, setForm] = useState(empty);
 
   const load = async () => { try { const d = await api('/students'); setStudents(d.students); } catch (e) { toast.error(e.message); } };
@@ -1051,6 +1133,15 @@ function StudentsPage() {
               </div>
               <div className="space-y-1"><Label>Fee per class (₹)</Label><Input type="number" value={form.feePerClass} onChange={(e) => setForm({ ...form, feePerClass: Number(e.target.value) })} /></div>
               <div className="space-y-1"><Label>Default Pack Size</Label><Input type="number" value={form.defaultPackSize} onChange={(e) => setForm({ ...form, defaultPackSize: Number(e.target.value) })} /></div>
+              <div className="space-y-1 col-span-2">
+                <Label>Student Timezone</Label>
+                <Select value={form.timezone || 'Asia/Kolkata'} onValueChange={(v) => setForm({ ...form, timezone: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {TIMEZONES.map(tz => <SelectItem key={tz.value} value={tz.value}>{tz.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             {!selected && (
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
@@ -1096,6 +1187,7 @@ function ClassesPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [attCls, setAttCls] = useState(null);
   const [filter, setFilter] = useState('upcoming');
+  const [scheduleTz, setScheduleTz] = useState('Asia/Kolkata');
   const empty = { studentId: '', startTime: '', duration: 60, mode: 'online', topic: '', useStudentLink: true, recurring: false, recurringDays: [], startDate: '', endDate: '', time: '17:00' };
   const [form, setForm] = useState(empty);
 
@@ -1118,7 +1210,12 @@ function ClassesPage() {
     try {
       const payload = { ...form };
       if (!payload.recurring && payload.startTime) {
-        payload.startTime = new Date(payload.startTime).toISOString();
+        const parts = payload.startTime.split('T');
+        if (parts.length === 2) {
+          payload.startTime = localTimeToUtcIso(parts[0], parts[1], scheduleTz);
+        } else {
+          payload.startTime = new Date(payload.startTime).toISOString();
+        }
       }
       const d = await api('/classes', { method: 'POST', body: payload });
       toast.success(`Created ${d.classes.length} class${d.classes.length > 1 ? 'es' : ''}`);
@@ -1165,12 +1262,24 @@ function ClassesPage() {
               <Select value={form.studentId} onValueChange={(v) => {
                 const s = students.find(x => x.id === v);
                 setForm({ ...form, studentId: v, mode: s?.mode === 'hybrid' ? 'online' : (s?.mode || 'online'), duration: s?.defaultDuration || 60 });
+                if (s?.timezone) setScheduleTz(s.timezone);
               }}>
                 <SelectTrigger><SelectValue placeholder="Choose student" /></SelectTrigger>
-                <SelectContent>{students.map(s => <SelectItem key={s.id} value={s.id}>{s.name} ({s.level})</SelectItem>)}</SelectContent>
+                <SelectContent>{students.map(s => <SelectItem key={s.id} value={s.id}>{s.name} ({s.level} · {s.timezone ? s.timezone.split('/')[1]?.replace('_',' ') : 'IST'})</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1"><Label>Topic (optional)</Label><Input value={form.topic} onChange={(e) => setForm({ ...form, topic: e.target.value })} placeholder="Verb Conjugation..." /></div>
+
+            <div className="space-y-1">
+              <Label>Schedule in Timezone</Label>
+              <Select value={scheduleTz} onValueChange={setScheduleTz}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={getBrowserTimezone()}>My Local Timezone ({getBrowserTimezone()})</SelectItem>
+                  {TIMEZONES.map(tz => <SelectItem key={tz.value} value={tz.value}>{tz.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
 
             <div className="flex items-center gap-2">
               <input type="checkbox" id="recurring" checked={form.recurring} onChange={(e) => setForm({ ...form, recurring: e.target.checked })} className="w-4 h-4" />

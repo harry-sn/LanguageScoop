@@ -1023,6 +1023,7 @@ async function handle(request, context) {
           teacherId: user.id,
           studentId: student.id,
           studentName: student.name,
+          studentTimezone: student.timezone || 'Asia/Kolkata',
           startTime: st.toISOString(),
           endTime: new Date(st.getTime() + duration * 60000).toISOString(),
           duration,
