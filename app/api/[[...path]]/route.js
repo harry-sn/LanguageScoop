@@ -35,10 +35,21 @@ async function sendPushToUser(database, userId, payload) {
 
 let client;
 let db;
+let clientPromise;
+
 async function getDb() {
   if (db) return db;
-  client = new MongoClient(MONGO_URL);
-  await client.connect();
+  if (!MONGO_URL) {
+    throw new Error('MONGO_URL environment variable is missing.');
+  }
+  if (!clientPromise) {
+    client = new MongoClient(MONGO_URL, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
+    });
+    clientPromise = client.connect();
+  }
+  await clientPromise;
   db = client.db(DB_NAME);
   return db;
 }
@@ -575,15 +586,22 @@ async function handle(request, context) {
   if (process.env.NODE_ENV === 'production') {
     if (!process.env.MONGO_URL) {
       console.error('FATAL: MONGO_URL environment variable is not defined for production.');
-      throw new Error('Database configuration error: missing MONGO_URL');
+      return json({ error: 'Database configuration error: MONGO_URL environment variable is not defined in production.' }, 500);
     }
     if (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'dev-secret' || process.env.JWT_SECRET.length < 16) {
       console.error('FATAL: Secure JWT_SECRET must be explicitly configured in production environment (minimum 16 characters).');
-      throw new Error('Auth configuration error: missing or insecure JWT_SECRET');
+      return json({ error: 'Auth configuration error: JWT_SECRET environment variable is missing or shorter than 16 characters.' }, 500);
     }
   }
 
-  const database = await getDb();
+  let database;
+  try {
+    database = await getDb();
+  } catch (dbErr) {
+    console.error('Database Connection Error:', dbErr.message);
+    return json({ error: `Database connection failed: ${dbErr.message}. Check MONGO_URL and MongoDB Atlas Network Access IP Whitelist.` }, 500);
+  }
+
   if (process.env.NODE_ENV !== 'production') {
     await ensureSeed();
   }
