@@ -273,7 +273,9 @@ function sanitizeFilename(name) {
 // ------------- Route Handlers ----------------
 async function handle(request, context) {
   const database = await getDb();
-  await ensureSeed();
+  if (process.env.NODE_ENV !== 'production') {
+    await ensureSeed();
+  }
 
   const method = request.method;
   const params = await context.params;
