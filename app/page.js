@@ -18,7 +18,7 @@ import {
   Video, MapPin, Copy, LogOut, Plus, GraduationCap, Clock,
   CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send,
   Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X, MoreHorizontal,
-  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music, Lock, Globe
+  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music, Lock, Globe, Eye, EyeOff, Pencil
 } from 'lucide-react';
 
 const API = '/api';
@@ -107,6 +107,31 @@ function localTimeToUtcIso(dateStr, timeStr, timeZone) {
 
 const fmtMoney = (n) => `₹${(n || 0).toLocaleString('en-IN')}`;
 const initials = (name = '') => name.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
+
+function PasswordInput({ value, onChange, placeholder = '••••••••', disabled, className, ...props }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        type={show ? 'text' : 'password'}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        disabled={disabled}
+        className={`pr-10 ${className || ''}`}
+        {...props}
+      />
+      <button
+        type="button"
+        onClick={() => setShow(!show)}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground focus:outline-none"
+        tabIndex={-1}
+      >
+        {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+      </button>
+    </div>
+  );
+}
 
 function useCountdown(targetIso) {
   const [now, setNow] = useState(Date.now());
@@ -495,7 +520,7 @@ function LoginScreen({ onLogin, onBack }) {
               </>
             )}
             <div className="space-y-2"><Label>Email</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
-            <div className="space-y-2"><Label>Password</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></div>
+            <div className="space-y-2"><Label>Password</Label><PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} /></div>
             <Button className="w-full" size="lg" onClick={submit} disabled={loading}>
               {loading ? 'Please wait...' : (mode === 'login' ? 'Sign in' : 'Create account')}
             </Button>
@@ -521,7 +546,76 @@ function LoginScreen({ onLogin, onBack }) {
   );
 }
 
-function ClassCard({ cls, onMarkAttendance, isStudent }) {
+function EditClassDialog({ cls, open, onClose, onDone }) {
+  const [topic, setTopic] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [duration, setDuration] = useState(60);
+  const [mode, setMode] = useState('online');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (cls) {
+      setTopic(cls.topic || '');
+      if (cls.startTime) {
+        const d = new Date(cls.startTime);
+        const tzOffset = d.getTimezoneOffset() * 60000;
+        const localIso = new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+        setStartTime(localIso);
+      }
+      setDuration(cls.duration || 60);
+      setMode(cls.mode || 'online');
+    }
+  }, [cls]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const payload = { topic, duration, mode };
+      if (startTime) {
+        payload.startTime = new Date(startTime).toISOString();
+      }
+      await api(`/classes/${cls.id}`, { method: 'PUT', body: payload });
+      toast.success('Class timing & details updated');
+      onDone(); onClose();
+    } catch (e) { toast.error(e.message); } finally { setSaving(false); }
+  };
+
+  if (!cls) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit Class Details</DialogTitle>
+          <DialogDescription>Update timing or topic for {cls.studentName}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="space-y-1"><Label>Topic</Label><Input value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Grammar & Vocab..." /></div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1"><Label>Date & Time</Label><Input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} /></div>
+            <div className="space-y-1"><Label>Duration (mins)</Label><Input type="number" value={duration} onChange={(e) => setDuration(Number(e.target.value))} /></div>
+          </div>
+          <div className="space-y-1">
+            <Label>Mode</Label>
+            <Select value={mode} onValueChange={setMode}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="online">Online</SelectItem>
+                <SelectItem value="offline">Offline</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving}>{saving ? 'Updating...' : 'Save Changes'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ClassCard({ cls, onMarkAttendance, onEditClass, onDeleteClass, isStudent }) {
   const countdown = useCountdown(cls.startTime);
   const isUpcoming = new Date(cls.startTime) > new Date();
   const isPast = new Date(cls.endTime || cls.startTime) < new Date();
@@ -579,27 +673,39 @@ function ClassCard({ cls, onMarkAttendance, isStudent }) {
             <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /><span>{cls.classroomLocation}</span>
           </div>
         )}
-        <div className="mt-3 flex flex-wrap gap-2">
-          {cls.mode === 'online' && cls.meetingLink && (
-            <>
-              <Button size="sm" onClick={openMeeting} className="gap-1.5">
-                <Video className="w-4 h-4" />{isStudent ? 'Join Class' : 'Open Meeting'}
-              </Button>
-              <Button size="sm" variant="outline" onClick={copyLink} className="gap-1.5"><Copy className="w-4 h-4" />Copy Link</Button>
-            </>
-          )}
-          {cls.mode === 'online' && !cls.meetingLink && (
-            <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><AlertCircle className="w-3 h-3" />Meeting link missing</Badge>
-          )}
-          {!isStudent && (
-            <>
-              <Button size="sm" variant="outline" onClick={notifyStudent} className="gap-1.5"><Send className="w-4 h-4" />WhatsApp</Button>
-              {(cls.status === 'upcoming') && (
-                <Button size="sm" variant="outline" onClick={() => onMarkAttendance?.(cls)} className="gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" />Mark Attendance
+        <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">
+          <div className="flex flex-wrap gap-2">
+            {cls.mode === 'online' && cls.meetingLink && (
+              <>
+                <Button size="sm" onClick={openMeeting} className="gap-1.5">
+                  <Video className="w-4 h-4" />{isStudent ? 'Join Class' : 'Open Meeting'}
                 </Button>
-              )}
-            </>
+                <Button size="sm" variant="outline" onClick={copyLink} className="gap-1.5"><Copy className="w-4 h-4" />Copy Link</Button>
+              </>
+            )}
+            {cls.mode === 'online' && !cls.meetingLink && (
+              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><AlertCircle className="w-3 h-3" />Meeting link missing</Badge>
+            )}
+            {!isStudent && (
+              <>
+                <Button size="sm" variant="outline" onClick={notifyStudent} className="gap-1.5"><Send className="w-4 h-4" />WhatsApp</Button>
+                {(cls.status === 'upcoming') && (
+                  <Button size="sm" variant="outline" onClick={() => onMarkAttendance?.(cls)} className="gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />Mark Attendance
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+          {!isStudent && (
+            <div className="flex items-center gap-1 ml-auto">
+              <Button size="sm" variant="ghost" onClick={() => onEditClass?.(cls)} className="text-xs px-2" title="Edit Class Details & Time">
+                <Pencil className="w-3.5 h-3.5" />
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => onDeleteClass?.(cls)} className="text-xs px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50" title="Delete Class">
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           )}
         </div>
       </CardContent>
@@ -687,6 +793,7 @@ function AttendanceDialog({ cls, open, onClose, onDone }) {
 function TeacherDashboard({ onNavigate }) {
   const [data, setData] = useState(null);
   const [attCls, setAttCls] = useState(null);
+  const [editCls, setEditCls] = useState(null);
   const nextClass = data?.nextClass;
   const countdown = useCountdown(nextClass?.startTime);
 
@@ -694,6 +801,15 @@ function TeacherDashboard({ onNavigate }) {
     try { setData(await api('/dashboard')); } catch (e) { toast.error(e.message); }
   };
   useEffect(() => { load(); }, []);
+
+  const deleteClass = async (c) => {
+    if (!confirm(`Are you sure you want to delete this class with ${c.studentName}?`)) return;
+    try {
+      await api(`/classes/${c.id}`, { method: 'DELETE' });
+      toast.success('Class deleted');
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
 
   if (!data) return <div className="p-6 text-muted-foreground">Loading...</div>;
 
@@ -742,6 +858,9 @@ function TeacherDashboard({ onNavigate }) {
                 <Button variant="secondary" onClick={() => setAttCls(nextClass)} className="gap-1.5">
                   <CheckCircle2 className="w-4 h-4" />Mark Attendance
                 </Button>
+                <Button variant="outline" onClick={() => setEditCls(nextClass)} className="gap-1 text-white border-white/40 hover:bg-white/10" title="Edit Class">
+                  <Pencil className="w-4 h-4" />Edit
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -768,12 +887,13 @@ function TeacherDashboard({ onNavigate }) {
           <Card><CardContent className="p-8 text-center text-muted-foreground">No classes scheduled today. 🌤️</CardContent></Card>
         ) : (
           <div className="grid gap-3">
-            {data.todayClasses.map(c => <ClassCard key={c.id} cls={c} onMarkAttendance={setAttCls} />)}
+            {data.todayClasses.map(c => <ClassCard key={c.id} cls={c} onMarkAttendance={setAttCls} onEditClass={setEditCls} onDeleteClass={deleteClass} />)}
           </div>
         )}
       </div>
 
       <AttendanceDialog cls={attCls} open={!!attCls} onClose={() => setAttCls(null)} onDone={load} />
+      <EditClassDialog cls={editCls} open={!!editCls} onClose={() => setEditCls(null)} onDone={load} />
     </div>
   );
 }
@@ -924,7 +1044,7 @@ function ResetPasswordDialog({ student, open, onClose }) {
         <div className="space-y-3 py-2">
           <div className="space-y-1">
             <Label>New Password</Label>
-            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Minimum 6 characters" />
+            <PasswordInput value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Minimum 6 characters" />
           </div>
         </div>
         <DialogFooter>
@@ -973,15 +1093,15 @@ function ChangePasswordDialog({ open, onClose }) {
         <div className="space-y-3 py-2">
           <div className="space-y-1">
             <Label>Current Password</Label>
-            <Input type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} />
+            <PasswordInput value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label>New Password</Label>
-            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Min 6 characters" />
+            <PasswordInput value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Min 6 characters" />
           </div>
           <div className="space-y-1">
             <Label>Confirm New Password</Label>
-            <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+            <PasswordInput value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
           </div>
         </div>
         <DialogFooter>
@@ -1015,6 +1135,15 @@ function StudentsPage() {
         toast.success(`Student added${res.tempPassword ? `. Login: ${form.email} / ${res.tempPassword}` : ''}`);
       }
       setShowAdd(false); setSelected(null); setForm(empty); load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const removeStudent = async (id, name) => {
+    if (!confirm(`Are you sure you want to delete ${name}? This will remove their profile, classes, and packs.`)) return;
+    try {
+      await api(`/students/${id}`, { method: 'DELETE' });
+      toast.success(`Student ${name} deleted`);
+      load();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -1088,6 +1217,9 @@ function StudentsPage() {
                         <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="text-xs px-2">
                           Edit
                         </Button>
+                        <Button size="sm" variant="ghost" onClick={() => removeStudent(s.id, s.name)} className="text-xs px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50" title="Delete Student">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -1110,7 +1242,7 @@ function StudentsPage() {
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1"><Label>Full Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-              <div className="space-y-1"><Label>Email {!selected && '(for login)'}</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} disabled={!!selected} /></div>
+              <div className="space-y-1"><Label>Email (student login)</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
               <div className="space-y-1"><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></div>
               <div className="space-y-1"><Label>Parent Phone</Label><Input value={form.parentPhone} onChange={(e) => setForm({ ...form, parentPhone: e.target.value })} /></div>
               <div className="space-y-1">
@@ -1186,6 +1318,7 @@ function ClassesPage() {
   const [students, setStudents] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [attCls, setAttCls] = useState(null);
+  const [editCls, setEditCls] = useState(null);
   const [filter, setFilter] = useState('upcoming');
   const [scheduleTz, setScheduleTz] = useState('Asia/Kolkata');
   const empty = { studentId: '', startTime: '', duration: 60, mode: 'online', topic: '', useStudentLink: true, recurring: false, recurringDays: [], startDate: '', endDate: '', time: '17:00' };
@@ -1198,6 +1331,15 @@ function ClassesPage() {
     } catch (e) { toast.error(e.message); }
   };
   useEffect(() => { load(); }, []);
+
+  const deleteClass = async (c) => {
+    if (!confirm(`Are you sure you want to delete this class with ${c.studentName}?`)) return;
+    try {
+      await api(`/classes/${c.id}`, { method: 'DELETE' });
+      toast.success('Class deleted');
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
 
   const filtered = useMemo(() => {
     const now = new Date();
@@ -1247,11 +1389,13 @@ function ClassesPage() {
           {filtered.map(c => (
             <div key={c.id}>
               <div className="text-xs text-muted-foreground mb-1 ml-1">{fmtDate(c.startTime)}</div>
-              <ClassCard cls={c} onMarkAttendance={setAttCls} />
+              <ClassCard cls={c} onMarkAttendance={setAttCls} onEditClass={setEditCls} onDeleteClass={deleteClass} />
             </div>
           ))}
         </div>
       )}
+
+      <EditClassDialog cls={editCls} open={!!editCls} onClose={() => setEditCls(null)} onDone={load} />
 
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">

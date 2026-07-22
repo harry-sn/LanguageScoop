@@ -813,6 +813,7 @@ async function handle(request, context) {
       const b = body;
       const updates = {
         name: b.name ?? student.name,
+        email: b.email ? b.email.trim().toLowerCase() : student.email,
         phone: b.phone ?? student.phone,
         parentName: b.parentName ?? student.parentName,
         parentPhone: b.parentPhone ?? student.parentPhone,
@@ -831,6 +832,12 @@ async function handle(request, context) {
         notes: b.notes ?? student.notes,
         updatedAt: new Date().toISOString(),
       };
+      if (b.email && b.email.trim().toLowerCase() !== (student.email || '').toLowerCase()) {
+        const newEmail = b.email.trim().toLowerCase();
+        if (student.userId) {
+          await database.collection('users').updateOne({ id: student.userId }, { $set: { email: newEmail, name: updates.name, updatedAt: new Date().toISOString() } });
+        }
+      }
       await database.collection('students').updateOne({ id }, { $set: updates });
       const updated = await database.collection('students').findOne({ id });
       return json({ student: updated });
@@ -1735,12 +1742,17 @@ async function handle(request, context) {
     if (route === 'dashboard' && method === 'GET') {
       if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
       const now = new Date();
-      const dayStart = new Date(now); dayStart.setHours(0,0,0,0);
-      const dayEnd = new Date(now); dayEnd.setHours(23,59,59,999);
+      // Calculate today's start and end in teacher's configured timezone (Asia/Kolkata default)
+      const tz = user.timezone || 'Asia/Kolkata';
+      const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+      const ymd = formatter.format(now);
+      const dayStartIso = new Date(`${ymd}T00:00:00.000+05:30`).toISOString();
+      const dayEndIso = new Date(`${ymd}T23:59:59.999+05:30`).toISOString();
+
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-      const todayClasses = await database.collection('classes').find({ teacherId: user.id, startTime: { $gte: dayStart.toISOString(), $lte: dayEnd.toISOString() } }).sort({ startTime: 1 }).toArray();
+      const todayClasses = await database.collection('classes').find({ teacherId: user.id, startTime: { $gte: dayStartIso, $lte: dayEndIso } }).sort({ startTime: 1 }).toArray();
       const upcomingNext = await database.collection('classes').find({ teacherId: user.id, startTime: { $gte: now.toISOString() } }).sort({ startTime: 1 }).limit(1).toArray();
       const monthClasses = await database.collection('classes').find({ teacherId: user.id, startTime: { $gte: monthStart.toISOString(), $lt: monthEnd.toISOString() } }).toArray();
       const students = await database.collection('students').find({ teacherId: user.id }).toArray();
