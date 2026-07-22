@@ -4,13 +4,14 @@ Backend API tests for Language Scoop - NEW FEATURES ONLY
 Tests file uploads, push notifications, homework attachments, and class reminders
 """
 
+import os
 import requests
 import json
 import base64
 import sys
 
-# Base URL from .env
-BASE_URL = "https://student-dash-test.preview.emergentagent.com/api"
+# Base URL
+BASE_URL = os.getenv("BASE_URL", "http://localhost:3000/api")
 
 # Test credentials
 TEACHER_EMAIL = "teacher@demo.com"
@@ -195,20 +196,14 @@ def test_file_download_public():
             print_error("No file_id available, skipping test")
             return False
         
-        # Try to download without auth
+        # Try to download without auth - should be blocked (401)
         response = requests.get(f"{BASE_URL}/files/{file_id}")
         
-        if response.status_code == 200:
-            content_type = response.headers.get('Content-Type')
-            if content_type == 'text/plain':
-                print_success(f"File downloaded successfully without auth, Content-Type: {content_type}")
-                print_success(f"File content length: {len(response.content)} bytes")
-                return True
-            else:
-                print_error(f"Wrong Content-Type: {content_type}")
-                return False
+        if response.status_code == 401:
+            print_success("Public access without auth correctly blocked with 401 status")
+            return True
         else:
-            print_error(f"File download failed: {response.status_code} - {response.text}")
+            print_error(f"Expected 401, got {response.status_code} - {response.text}")
             return False
     except Exception as e:
         print_error(f"File download exception: {str(e)}")
