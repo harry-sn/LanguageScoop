@@ -1417,15 +1417,55 @@ async function handle(request, context) {
       return json({ homework: updated });
     }
 
+    if (route === 'teacher/settings' && method === 'GET') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const dbUser = await database.collection('users').findOne({ id: user.id });
+      return json({
+        customTestLink: dbUser?.customTestLink || '',
+        customTestTitle: dbUser?.customTestTitle || '',
+        customTestDescription: dbUser?.customTestDescription || '',
+        academyName: dbUser?.academyName || '',
+      });
+    }
+
+    if (route === 'teacher/settings' && method === 'PUT') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const { customTestLink, customTestTitle, customTestDescription, academyName } = body;
+      await database.collection('users').updateOne(
+        { id: user.id },
+        {
+          $set: {
+            customTestLink: customTestLink || '',
+            customTestTitle: customTestTitle || '',
+            customTestDescription: customTestDescription || '',
+            academyName: academyName !== undefined ? academyName : user.academyName,
+            updatedAt: new Date().toISOString(),
+          }
+        }
+      );
+      const updated = await database.collection('users').findOne({ id: user.id });
+      return json({ ok: true, settings: updated });
+    }
+
     // ---- PRACTICE EXERCISES ----
     if (route === 'practice' && method === 'GET') {
       let filter = {};
-      if (user.role === 'teacher') filter.teacherId = user.id;
-      else {
+      let customTestPortal = null;
+      if (user.role === 'teacher') {
+        filter.teacherId = user.id;
+        const dbUser = await database.collection('users').findOne({ id: user.id });
+        if (dbUser?.customTestLink) {
+          customTestPortal = { link: dbUser.customTestLink, title: dbUser.customTestTitle, description: dbUser.customTestDescription };
+        }
+      } else {
         const student = await database.collection('students').findOne({ userId: user.id });
-        if (!student) return json({ practice: [] });
+        if (!student) return json({ practice: [], customTestPortal: null });
         filter.$or = [{ studentIds: student.id }, { studentIds: 'all' }];
         filter.teacherId = student.teacherId;
+        const teacherUser = await database.collection('users').findOne({ id: student.teacherId });
+        if (teacherUser?.customTestLink) {
+          customTestPortal = { link: teacherUser.customTestLink, title: teacherUser.customTestTitle, description: teacherUser.customTestDescription };
+        }
       }
       const practice = await database.collection('practice').find(filter).sort({ createdAt: -1 }).toArray();
       if (user.role === 'student') {
@@ -1435,7 +1475,7 @@ async function handle(request, context) {
           p.attempt = attempt;
         }
       }
-      return json({ practice });
+      return json({ practice, customTestPortal });
     }
 
     if (route === 'practice' && method === 'POST') {

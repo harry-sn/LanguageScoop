@@ -2044,17 +2044,39 @@ function PracticePage() {
   const [students, setStudents] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [viewing, setViewing] = useState(null);
+  const [testLink, setTestLink] = useState('');
+  const [testTitle, setTestTitle] = useState('');
+  const [testDesc, setTestDesc] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [showPortalConfig, setShowPortalConfig] = useState(false);
+
   const emptyQ = () => ({ type: 'mcq', text: '', options: ['', '', '', ''], correctAnswer: '', marks: 1, explanation: '' });
   const empty = { title: '', description: '', level: 'A1', topic: '', studentIds: 'all', dueDate: '', questions: [emptyQ()] };
   const [form, setForm] = useState(empty);
 
   const load = async () => {
     try {
-      const [p, s] = await Promise.all([api('/practice'), api('/students')]);
+      const [p, s, st] = await Promise.all([api('/practice'), api('/students'), api('/teacher/settings')]);
       setItems(p.practice); setStudents(s.students);
+      if (st) {
+        setTestLink(st.customTestLink || '');
+        setTestTitle(st.customTestTitle || '');
+        setTestDesc(st.customTestDescription || '');
+      }
     } catch (e) { toast.error(e.message); }
   };
   useEffect(() => { load(); }, []);
+
+  const saveSettings = async () => {
+    setSavingSettings(true);
+    try {
+      await api('/teacher/settings', {
+        method: 'PUT',
+        body: { customTestLink: testLink, customTestTitle: testTitle, customTestDescription: testDesc }
+      });
+      toast.success('Online Test Portal link saved! All your students can now access it.');
+    } catch (e) { toast.error(e.message); } finally { setSavingSettings(false); }
+  };
 
   const create = async () => {
     try {
@@ -2073,9 +2095,59 @@ function PracticePage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Practice Exercises</h1>
-        <Button onClick={() => { setForm(empty); setShowAdd(true); }} className="gap-1.5"><Plus className="w-4 h-4" />Create</Button>
+        <h1 className="text-2xl font-bold">Practice & Test Hub</h1>
+        <Button onClick={() => { setForm(empty); setShowAdd(true); }} className="gap-1.5"><Plus className="w-4 h-4" />Create Quiz</Button>
       </div>
+
+      <Card className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white border-0 shadow-md">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <div className="flex items-center gap-2 text-indigo-200 text-xs font-semibold uppercase tracking-wider">
+                <Sparkles className="w-4 h-4 text-amber-400" /> External Online Test Portal (Optional)
+              </div>
+              <h3 className="text-lg font-bold mt-1">{testTitle || 'Custom Online Test Link'}</h3>
+              <p className="text-xs text-indigo-200 mt-0.5 max-w-xl">
+                {testLink ? `Active Link: ${testLink}` : 'Add a link to your custom test website (e.g., https://nitu-french.netlify.app/) so all your students can attempt it.'}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {testLink && (
+                <Button size="sm" variant="secondary" onClick={() => window.open(testLink, '_blank')} className="gap-1.5">
+                  Test Link 🔗
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => setShowPortalConfig(!showPortalConfig)} className="gap-1.5 text-white border-white/30 hover:bg-white/10">
+                {showPortalConfig ? 'Close Settings' : (testLink ? 'Edit Portal Link' : '+ Add Test Link')}
+              </Button>
+            </div>
+          </div>
+
+          {showPortalConfig && (
+            <div className="mt-4 pt-4 border-t border-indigo-800/60 space-y-3">
+              <div className="grid sm:grid-cols-2 gap-3 text-slate-900">
+                <div className="space-y-1">
+                  <Label className="text-indigo-100 text-xs font-medium">Test Portal URL</Label>
+                  <Input value={testLink} onChange={(e) => setTestLink(e.target.value)} placeholder="https://nitu-french.netlify.app/" className="bg-white" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-indigo-100 text-xs font-medium">Portal Display Title</Label>
+                  <Input value={testTitle} onChange={(e) => setTestTitle(e.target.value)} placeholder="Nitu French Online Tests" className="bg-white" />
+                </div>
+              </div>
+              <div className="space-y-1 text-slate-900">
+                <Label className="text-indigo-100 text-xs font-medium">Short Description for Students</Label>
+                <Input value={testDesc} onChange={(e) => setTestDesc(e.target.value)} placeholder="Official online test portal with practice exams and quizzes" className="bg-white" />
+              </div>
+              <div className="flex justify-end pt-1">
+                <Button size="sm" onClick={saveSettings} disabled={savingSettings} className="bg-amber-400 hover:bg-amber-300 text-slate-900 font-semibold gap-1.5">
+                  {savingSettings ? 'Saving...' : 'Save Portal Settings'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
       <div className="grid gap-3">
         {items.length === 0 ? (
           <Card><CardContent className="p-8 text-center text-muted-foreground">No practice exercises yet. Create one to test your students.</CardContent></Card>
@@ -2227,10 +2299,17 @@ function PracticePage() {
 // -------- Practice (Student) --------
 function StudentPractice() {
   const [items, setItems] = useState([]);
+  const [customPortal, setCustomPortal] = useState(null);
   const [attempting, setAttempting] = useState(null);
   const [answers, setAnswers] = useState({});
 
-  const load = async () => { try { const d = await api('/practice'); setItems(d.practice); } catch (e) { toast.error(e.message); } };
+  const load = async () => {
+    try {
+      const d = await api('/practice');
+      setItems(d.practice || []);
+      setCustomPortal(d.customTestPortal || null);
+    } catch (e) { toast.error(e.message); }
+  };
   useEffect(() => { load(); }, []);
 
   const submit = async () => {
@@ -2244,7 +2323,25 @@ function StudentPractice() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">Practice</h1>
+      <h1 className="text-2xl font-bold">Practice & Tests</h1>
+
+      {customPortal && customPortal.link && (
+        <Card className="bg-gradient-to-r from-purple-900 to-indigo-900 text-white border-0 shadow-lg">
+          <CardContent className="p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-purple-200 text-xs font-semibold uppercase tracking-wider">
+                <Sparkles className="w-4 h-4 text-amber-300" /> Online Test Portal
+              </div>
+              <div className="text-xl font-bold mt-1">{customPortal.title || 'Official Online Tests'}</div>
+              <p className="text-sm text-purple-100 mt-0.5 max-w-xl">{customPortal.description || 'Access practice exams & quizzes hosted by your teacher.'}</p>
+            </div>
+            <Button size="lg" className="bg-amber-400 hover:bg-amber-300 text-slate-900 font-bold gap-2 flex-shrink-0" onClick={() => window.open(customPortal.link, '_blank')}>
+              Launch Online Tests 🚀
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-3">
         {items.length === 0 ? <Card><CardContent className="p-8 text-center text-muted-foreground">No practice exercises yet. 🎉</CardContent></Card> :
           items.map(p => (
