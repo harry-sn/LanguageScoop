@@ -3072,6 +3072,18 @@ function CalendarPage() {
     } catch (e) { toast.error(e.message); } finally { setQuickSaving(false); }
   };
 
+  const [attCls, setAttCls] = useState(null);
+  const [editCls, setEditCls] = useState(null);
+
+  const deleteClass = async (c) => {
+    if (!confirm(`Are you sure you want to delete this class with ${c.studentName}?`)) return;
+    try {
+      await api(`/classes/${c.id}`, { method: 'DELETE' });
+      toast.success('Class deleted');
+      loadData();
+    } catch (e) { toast.error(e.message); }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
@@ -3230,6 +3242,9 @@ function CalendarPage() {
         </CardContent></Card>
       )}
 
+      <AttendanceDialog cls={attCls} open={!!attCls} onClose={() => setAttCls(null)} onDone={loadData} />
+      <EditClassDialog cls={editCls} open={!!editCls} onClose={() => setEditCls(null)} onDone={loadData} />
+
       {/* Quick Schedule Modal from Free Slot */}
       <Dialog open={!!quickSlot} onOpenChange={(o) => { if (!o) setQuickSlot(null); }}>
         <DialogContent className="max-w-md">
@@ -3276,11 +3291,19 @@ function CalendarPage() {
       </Dialog>
 
       <Dialog open={!!selectedDay} onOpenChange={(o) => { if (!o) setSelectedDay(null); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>{selectedDay && fmtDateLong(selectedDay.toISOString())}</DialogTitle></DialogHeader>
-          <div className="space-y-2">
+          <div className="space-y-3 py-1">
             {selectedDay && classesOnDay(selectedDay).length === 0 ? <div className="text-center py-6 text-muted-foreground">No classes this day</div> :
-              selectedDay && classesOnDay(selectedDay).map(c => <ClassCard key={c.id} cls={c} />)
+              selectedDay && classesOnDay(selectedDay).map(c => (
+                <ClassCard
+                  key={c.id}
+                  cls={c}
+                  onMarkAttendance={setAttCls}
+                  onEditClass={setEditCls}
+                  onDeleteClass={deleteClass}
+                />
+              ))
             }
           </div>
         </DialogContent>
