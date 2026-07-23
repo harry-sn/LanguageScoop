@@ -1844,20 +1844,37 @@ async function handle(request, context) {
       const homeworkToReview = await database.collection('homework').countDocuments({ teacherId: user.id, status: 'submitted' });
       const billableThisMonth = monthClasses.filter(c => c.billable).length;
       const monthlyRevenue = monthClasses.filter(c => c.billable).reduce((sum, c) => sum + (c.feeSnapshot || 0), 0);
-      // Check for classes starting within 15 minutes and send automated 15-min pre-class push alarm
+      // Check for classes starting within 15 minutes and send automated 15-min pre-class push alarm to teacher & student
       const in15MinIso = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
       const upcoming15 = todayClasses.filter(c => c.status === 'upcoming' && c.startTime >= now.toISOString() && c.startTime <= in15MinIso);
       for (const c of upcoming15) {
-        if (!c.reminded15MinTeacher) {
-          const timeStr = new Date(c.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
-          sendPushToUser(database, user.id, {
+        const timeStr = new Date(c.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
+        
+        // Push to Teacher
+        if (!c.reminded15MinTeacher && c.teacherId) {
+          sendPushToUser(database, c.teacherId, {
             title: `🔔 Class starts in 15 minutes!`,
             body: `${c.studentName} — ${c.topic || 'French Class'} at ${timeStr}. Tap to open Zoom.`,
-            url: '/',
-            tag: `alarm-15m-${c.id}`,
+            url: c.meetingLink || '/',
+            tag: `alarm-15m-tch-${c.id}`,
             requireInteraction: true,
           }).catch(() => {});
           await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinTeacher: true } });
+        }
+
+        // Push to Student
+        if (!c.reminded15MinStudent && c.studentId) {
+          const stObj = await database.collection('students').findOne({ id: c.studentId });
+          if (stObj && stObj.userId) {
+            sendPushToUser(database, stObj.userId, {
+              title: `🔔 Your class starts in 15 minutes!`,
+              body: `${c.topic || 'Language Class'} with tutor at ${timeStr}. Tap to join Zoom!`,
+              url: c.meetingLink || '/',
+              tag: `alarm-15m-std-${c.id}`,
+              requireInteraction: true,
+            }).catch(() => {});
+            await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinStudent: true } });
+          }
         }
       }
 

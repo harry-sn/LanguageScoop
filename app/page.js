@@ -212,14 +212,26 @@ function NotificationButton() {
   const [status, setStatus] = useState('idle'); // idle | enabled | denied | unsupported
   const [loading, setLoading] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [showPromptModal, setShowPromptModal] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       setStatus('unsupported'); return;
     }
-    if (Notification.permission === 'denied') setStatus('denied');
-    api('/push/status').then(d => { if (d.enabled) setStatus('enabled'); }).catch(() => {});
+    if (Notification.permission === 'denied') {
+      setStatus('denied');
+    }
+    api('/push/status').then(d => {
+      if (d.enabled) {
+        setStatus('enabled');
+      } else {
+        // Show automatic setup prompt popup if not dismissed in session
+        if (!sessionStorage.getItem('notif_prompt_dismissed') && Notification.permission !== 'granted') {
+          setTimeout(() => setShowPromptModal(true), 1500);
+        }
+      }
+    }).catch(() => {});
   }, []);
 
   const enable = async () => {
@@ -230,6 +242,7 @@ function NotificationButton() {
         toast.error('Notification permission denied by browser');
         setStatus('denied');
         setShowGuide(true);
+        setShowPromptModal(false);
         return;
       }
       const reg = await navigator.serviceWorker.ready;
@@ -240,6 +253,7 @@ function NotificationButton() {
       });
       await api('/push/subscribe', { method: 'POST', body: { subscription } });
       setStatus('enabled');
+      setShowPromptModal(false);
       playBellRingtone();
       toast.success('🔔 15-Minute Class Alerts & Ringtone Enabled!');
     } catch (e) {
@@ -288,12 +302,56 @@ function NotificationButton() {
             </Button>
           </>
         ) : (
-          <Button size="sm" variant="outline" onClick={enable} disabled={loading} className="gap-1.5 text-xs bg-amber-50 text-amber-900 border-amber-300 font-medium">
-            <Bell className="w-3.5 h-3.5 text-amber-600" />
+          <Button size="sm" variant="outline" onClick={() => setShowPromptModal(true)} disabled={loading} className="gap-1.5 text-xs bg-amber-50 text-amber-900 border-amber-300 font-medium">
+            <Bell className="w-3.5 h-3.5 text-amber-600 animate-bounce" />
             {status === 'denied' ? 'Alerts Blocked 📲' : 'Enable 15m Bell 🔔'}
           </Button>
         )}
       </div>
+
+      {/* Automatic Setup Prompt Popup Modal */}
+      <Dialog open={showPromptModal} onOpenChange={(open) => {
+        setShowPromptModal(open);
+        if (!open) sessionStorage.setItem('notif_prompt_dismissed', '1');
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-primary">
+              <Bell className="w-5 h-5 text-amber-500 animate-bounce" /> Enable Class Alarm Bell 🔔
+            </DialogTitle>
+            <DialogDescription className="text-sm">
+              Never miss a class! Get automatic 15-minute pre-class push notifications and loud school bell ringtones on your Android phone and browser.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1.5 text-xs text-amber-900">
+              <div className="font-semibold flex items-center gap-1.5 text-sm">
+                <Volume2 className="w-4 h-4 text-amber-600" /> What this does:
+              </div>
+              <ul className="list-disc pl-4 space-y-1">
+                <li>Rings a loud 3-stage school bell 15 minutes before every scheduled class.</li>
+                <li>Sends instant Zoom join links directly to your phone lockscreen.</li>
+                <li>Notifies both Tutors and Students automatically.</li>
+              </ul>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2">
+              <Button onClick={enable} disabled={loading} className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5">
+                <Bell className="w-4 h-4" /> Enable 15-Minute Class Alarms Now 🚀
+              </Button>
+              
+              <Button variant="outline" onClick={() => { setShowPromptModal(false); setShowGuide(true); }} className="w-full gap-2 text-xs">
+                <Smartphone className="w-4 h-4 text-blue-600" /> Open Android Settings & Permission Guide ⚙️
+              </Button>
+
+              <Button variant="ghost" size="sm" onClick={() => { setShowPromptModal(false); sessionStorage.setItem('notif_prompt_dismissed', '1'); }} className="text-xs text-muted-foreground">
+                Remind Me Later
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showGuide} onOpenChange={setShowGuide}>
         <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
