@@ -3006,18 +3006,27 @@ function CalendarPage() {
     return d;
   });
 
-  // Hours displayed in weekly view (8:00 AM to 9:00 PM)
-  const hours = Array.from({ length: 14 }, (_, i) => 8 + i);
+  // Hours/minutes displayed in weekly view (30-minute intervals from 8:00 AM to 9:30 PM)
+  const timeSlots = [];
+  for (let h = 8; h <= 21; h++) {
+    timeSlots.push({ hour: h, minute: 0 });
+    timeSlots.push({ hour: h, minute: 30 });
+  }
 
   const classesOnDay = (d) => classes.filter(c => {
     const s = new Date(c.startTime);
     return d && s.getFullYear() === d.getFullYear() && s.getMonth() === d.getMonth() && s.getDate() === d.getDate();
   });
 
-  const classesInSlot = (d, hr) => classesOnDay(d).filter(c => {
-    const s = new Date(c.startTime);
-    return s.getHours() === hr;
-  });
+  const getSlotOverlaps = (d, hr, min) => {
+    const slotStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hr, min, 0);
+    const slotEnd = new Date(slotStart.getTime() + 30 * 60000);
+    return classesOnDay(d).filter(c => {
+      const cStart = new Date(c.startTime);
+      const cEnd = new Date(c.endTime || (cStart.getTime() + (c.duration || 60) * 60000));
+      return cStart < slotEnd && cEnd > slotStart;
+    });
+  };
 
   // Month view helpers
   const year = cursor.getFullYear();
@@ -3039,9 +3048,13 @@ function CalendarPage() {
     try {
       const student = students.find(s => s.id === quickStudentId);
       const d = new Date(quickSlot.date);
-      d.setHours(quickSlot.hour, 0, 0, 0);
-      const tzOffset = d.getTimezoneOffset() * 60000;
-      const localIso = new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+      d.setHours(quickSlot.hour, quickSlot.minute || 0, 0, 0);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dy = String(d.getDate()).padStart(2, '0');
+      const hr = String(d.getHours()).padStart(2, '0');
+      const mn = String(d.getMinutes()).padStart(2, '0');
+      const localIso = `${y}-${m}-${dy}T${hr}:${mn}`;
 
       const payload = {
         studentId: quickStudentId,
@@ -3067,7 +3080,7 @@ function CalendarPage() {
             <CalendarDays className="w-6 h-6 text-primary" /> Schedule & Free Slots
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
-            View your weekly schedule and assign free time slots to new students in 1 click.
+            View your 30-minute weekly schedule matrix and assign free time slots to new students in 1 click.
           </p>
         </div>
 
@@ -3110,7 +3123,7 @@ function CalendarPage() {
           <CardHeader className="py-3 px-4 bg-slate-50/50 border-b flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-              Weekly Availability Matrix (8:00 AM – 9:00 PM)
+              30-Minute Availability Matrix (8:00 AM – 9:30 PM)
             </CardTitle>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <div className="flex items-center gap-1.5">
@@ -3143,33 +3156,42 @@ function CalendarPage() {
                 })}
               </div>
 
-              {/* Time slot rows */}
-              {hours.map(hr => {
-                const hourLabel = `${hr === 12 ? 12 : hr % 12}:00 ${hr >= 12 ? 'PM' : 'AM'}`;
+              {/* 30-Minute Time slot rows */}
+              {timeSlots.map(({ hour: hr, minute: min }) => {
+                const hour12 = hr === 12 ? 12 : hr % 12;
+                const ampm = hr >= 12 ? 'PM' : 'AM';
+                const timeLabel = `${hour12}:${min === 0 ? '00' : '30'} ${ampm}`;
                 return (
-                  <div key={hr} className="grid grid-cols-8 border-b text-xs hover:bg-slate-50/30 transition">
-                    <div className="p-2 text-center text-muted-foreground border-r font-mono text-[11px] flex items-center justify-center bg-slate-50/40">
-                      {hourLabel}
+                  <div key={`${hr}-${min}`} className="grid grid-cols-8 border-b text-xs hover:bg-slate-50/30 transition">
+                    <div className="p-1.5 text-center text-muted-foreground border-r font-mono text-[11px] flex items-center justify-center bg-slate-50/40">
+                      {timeLabel}
                     </div>
                     {weekDays.map((d, i) => {
-                      const slots = classesInSlot(d, hr);
-                      const isBooked = slots.length > 0;
+                      const overlaps = getSlotOverlaps(d, hr, min);
+                      const isBooked = overlaps.length > 0;
                       return (
-                        <div key={i} className="p-1 border-r min-h-[64px] flex flex-col gap-1 justify-center relative group">
+                        <div key={i} className="p-1 border-r min-h-[48px] flex flex-col gap-1 justify-center relative group">
                           {isBooked ? (
-                            slots.map(c => (
-                              <button key={c.id} onClick={() => setSelectedDay(d)} className={`p-1.5 rounded-md border text-left text-xs transition shadow-sm w-full ${c.status === 'completed' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-blue-50 border-blue-300 text-blue-900 hover:bg-blue-100'}`}>
-                                <div className="font-bold truncate text-[11px]">{c.studentName}</div>
-                                <div className="text-[10px] opacity-80 font-mono">{fmtTime(c.startTime)}</div>
-                              </button>
-                            ))
+                            overlaps.map(c => {
+                              const cStart = new Date(c.startTime);
+                              const isStartsHere = cStart.getHours() === hr && Math.floor(cStart.getMinutes() / 30) * 30 === min;
+                              return (
+                                <button key={c.id} onClick={() => setSelectedDay(d)} className={`p-1 rounded-md border text-left text-xs transition shadow-sm w-full ${c.status === 'completed' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-blue-50 border-blue-300 text-blue-900 hover:bg-blue-100'}`}>
+                                  <div className="font-bold truncate text-[11px] flex items-center justify-between">
+                                    <span>{c.studentName}</span>
+                                    {!isStartsHere && <span className="text-[9px] opacity-70 font-normal">(Ongoing)</span>}
+                                  </div>
+                                  <div className="text-[10px] opacity-80 font-mono">{fmtTime(c.startTime)} - {fmtTime(c.endTime)}</div>
+                                </button>
+                              );
+                            })
                           ) : (
                             <button
-                              onClick={() => setQuickSlot({ date: d, hour: hr })}
-                              className="w-full h-full min-h-[50px] rounded-md border border-dashed border-slate-200 hover:border-emerald-400 bg-slate-50/50 hover:bg-emerald-50/60 text-slate-400 hover:text-emerald-700 transition flex flex-col items-center justify-center gap-0.5 group-hover:shadow-sm"
+                              onClick={() => setQuickSlot({ date: d, hour: hr, minute: min })}
+                              className="w-full h-full min-h-[38px] rounded-md border border-dashed border-slate-200 hover:border-emerald-400 bg-slate-50/50 hover:bg-emerald-50/60 text-slate-400 hover:text-emerald-700 transition flex flex-row items-center justify-center gap-1 group-hover:shadow-sm"
                             >
-                              <Plus className="w-3.5 h-3.5 opacity-60 group-hover:scale-110 transition-transform" />
-                              <span className="text-[10px] font-semibold">Free Slot</span>
+                              <Plus className="w-3 h-3 opacity-60 group-hover:scale-110 transition-transform" />
+                              <span className="text-[10px] font-medium">Free ({timeLabel})</span>
                             </button>
                           )}
                         </div>
@@ -3216,7 +3238,7 @@ function CalendarPage() {
               <Plus className="w-5 h-5 text-emerald-600" /> Schedule Class in Free Slot
             </DialogTitle>
             <DialogDescription>
-              {quickSlot && `${quickSlot.date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} at ${quickSlot.hour === 12 ? 12 : quickSlot.hour % 12}:00 ${quickSlot.hour >= 12 ? 'PM' : 'AM'}`}
+              {quickSlot && `${quickSlot.date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} at ${quickSlot.hour === 12 ? 12 : quickSlot.hour % 12}:${quickSlot.minute === 0 ? '00' : '30'} ${quickSlot.hour >= 12 ? 'PM' : 'AM'}`}
             </DialogDescription>
           </DialogHeader>
 
