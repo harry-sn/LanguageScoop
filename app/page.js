@@ -1306,12 +1306,93 @@ function ChangePasswordDialog({ open, onClose }) {
   );
 }
 
+function StudentClassesDialog({ student, open, onClose }) {
+  const [classes, setClasses] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [editCls, setEditCls] = useState(null);
+
+  const load = async () => {
+    if (!student) return;
+    setLoading(true);
+    try {
+      const res = await api('/classes');
+      const filtered = (res.classes || []).filter(c => c.studentId === student.id);
+      setClasses(filtered);
+    } catch (e) { toast.error(e.message); } finally { setLoading(false); }
+  };
+
+  useEffect(() => { if (open) load(); }, [open, student]);
+
+  if (!student) return null;
+  const now = new Date();
+  const upcoming = classes.filter(c => new Date(c.startTime) >= now).sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+  const past = classes.filter(c => new Date(c.startTime) < now).sort((a,b) => new Date(b.startTime) - new Date(a.startTime));
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CalendarDays className="w-5 h-5 text-primary" /> {student.name}'s Schedule & Classes
+          </DialogTitle>
+          <DialogDescription>
+            {student.level} level · {student.email} · {upcoming.length} upcoming classes
+          </DialogDescription>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="p-6 text-center text-muted-foreground text-sm">Loading schedule...</div>
+        ) : (
+          <div className="space-y-4 py-2">
+            <div>
+              <h3 className="font-semibold text-sm mb-2">Upcoming Classes ({upcoming.length})</h3>
+              {upcoming.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic p-3 bg-slate-50 border rounded-lg">No upcoming classes scheduled for {student.name}.</p>
+              ) : (
+                <div className="grid gap-2">
+                  {upcoming.map(c => <ClassCard key={c.id} cls={c} onEditClass={setEditCls} onDeleteClass={async (item) => {
+                    if (!confirm('Delete this class?')) return;
+                    await api(`/classes/${item.id}`, { method: 'DELETE' });
+                    toast.success('Class deleted');
+                    load();
+                  }} />)}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h3 className="font-semibold text-sm mb-2">Past Classes ({past.length})</h3>
+              {past.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic p-3 bg-slate-50 border rounded-lg">No past class history.</p>
+              ) : (
+                <div className="grid gap-2 max-h-60 overflow-y-auto pr-1">
+                  {past.map(c => <ClassCard key={c.id} cls={c} onEditClass={setEditCls} onDeleteClass={async (item) => {
+                    if (!confirm('Delete this class?')) return;
+                    await api(`/classes/${item.id}`, { method: 'DELETE' });
+                    toast.success('Class deleted');
+                    load();
+                  }} />)}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        <EditClassDialog cls={editCls} open={!!editCls} onClose={() => setEditCls(null)} onDone={load} />
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function StudentsPage() {
   const [students, setStudents] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [selected, setSelected] = useState(null);
   const [renewStudent, setRenewStudent] = useState(null);
   const [resetStudent, setResetStudent] = useState(null);
+  const [viewScheduleStudent, setViewScheduleStudent] = useState(null);
   const empty = { name: '', email: '', phone: '', parentName: '', parentPhone: '', level: 'A1', mode: 'online', feePerClass: 800, defaultPackSize: 8, paymentAmount: 6400, defaultDuration: 60, timezone: 'Asia/Kolkata', permanentMeetingLink: '', permanentMeetingId: '', permanentMeetingPasscode: '', classroomLocation: '', notes: '' };
   const [form, setForm] = useState(empty);
 
@@ -1399,18 +1480,23 @@ function StudentsPage() {
                       )}
                     </div>
 
-                    <div className="mt-3 flex items-center justify-between gap-1">
-                      <Button size="sm" variant="outline" onClick={() => setRenewStudent(s)} className="gap-1 text-xs text-primary border-primary/30 hover:bg-primary/5 px-2">
-                        Renew Pack
-                      </Button>
-                      <div className="flex items-center gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => setResetStudent(s)} className="text-xs px-2 text-muted-foreground">
-                          Reset Password
+                    <div className="mt-3 flex items-center justify-between gap-1 flex-wrap">
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="outline" onClick={() => setViewScheduleStudent(s)} className="gap-1 text-xs px-2">
+                          <CalendarDays className="w-3.5 h-3.5 text-primary" /> Classes
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="text-xs px-2">
+                        <Button size="sm" variant="outline" onClick={() => setRenewStudent(s)} className="gap-1 text-xs text-primary border-primary/30 hover:bg-primary/5 px-2">
+                          Renew Pack
+                        </Button>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => setResetStudent(s)} className="text-xs px-1.5 text-muted-foreground">
+                          Reset
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(s)} className="text-xs px-1.5">
                           Edit
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => removeStudent(s.id, s.name)} className="text-xs px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50" title="Delete Student">
+                        <Button size="sm" variant="ghost" onClick={() => removeStudent(s.id, s.name)} className="text-xs px-1.5 text-rose-600 hover:text-rose-700 hover:bg-rose-50" title="Delete Student">
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
@@ -1423,6 +1509,7 @@ function StudentsPage() {
         </div>
       )}
 
+      <StudentClassesDialog student={viewScheduleStudent} open={!!viewScheduleStudent} onClose={() => setViewScheduleStudent(null)} />
       <RenewPackDialog student={renewStudent} open={!!renewStudent} onClose={() => setRenewStudent(null)} onDone={load} />
       <ResetPasswordDialog student={resetStudent} open={!!resetStudent} onClose={() => setResetStudent(null)} />
 
@@ -1513,8 +1600,10 @@ function ClassesPage() {
   const [attCls, setAttCls] = useState(null);
   const [editCls, setEditCls] = useState(null);
   const [filter, setFilter] = useState('upcoming');
+  const [selectedStudentId, setSelectedStudentId] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [scheduleTz, setScheduleTz] = useState('Asia/Kolkata');
-  const empty = { studentId: '', startTime: '', duration: 60, mode: 'online', topic: '', useStudentLink: true, recurring: false, recurringDays: [], startDate: '', endDate: '', time: '17:00' };
+  const empty = { studentId: '', startTime: '', duration: 60, mode: 'online', topic: '', useStudentLink: true, recurring: false, recurringDays: [], startDate: '', endDate: '', time: '17:00', useCustomDayTimes: false, dayTimes: {} };
   const [form, setForm] = useState(empty);
 
   const load = async () => {
@@ -1536,10 +1625,18 @@ function ClassesPage() {
 
   const filtered = useMemo(() => {
     const now = new Date();
-    if (filter === 'upcoming') return classes.filter(c => new Date(c.startTime) >= now).sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
-    if (filter === 'past') return classes.filter(c => new Date(c.startTime) < now).sort((a,b) => new Date(b.startTime) - new Date(a.startTime));
-    return classes;
-  }, [classes, filter]);
+    let list = classes;
+    if (selectedStudentId !== 'all') {
+      list = list.filter(c => c.studentId === selectedStudentId);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(c => (c.studentName || '').toLowerCase().includes(q) || (c.topic || '').toLowerCase().includes(q));
+    }
+    if (filter === 'upcoming') return list.filter(c => new Date(c.startTime) >= now).sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+    if (filter === 'past') return list.filter(c => new Date(c.startTime) < now).sort((a,b) => new Date(b.startTime) - new Date(a.startTime));
+    return list;
+  }, [classes, filter, selectedStudentId, searchQuery]);
 
   const create = async () => {
     try {
@@ -1567,16 +1664,36 @@ function ClassesPage() {
         <Button onClick={() => setShowAdd(true)} className="gap-1.5"><Plus className="w-4 h-4" />Schedule</Button>
       </div>
 
-      <Tabs value={filter} onValueChange={setFilter}>
-        <TabsList>
-          <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-          <TabsTrigger value="past">Past</TabsTrigger>
-          <TabsTrigger value="all">All</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between">
+        <Tabs value={filter} onValueChange={setFilter}>
+          <TabsList>
+            <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
+            <TabsTrigger value="past">Past</TabsTrigger>
+            <TabsTrigger value="all">All</TabsTrigger>
+          </TabsList>
+        </Tabs>
+
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+          <Select value={selectedStudentId} onValueChange={setSelectedStudentId}>
+            <SelectTrigger className="w-full sm:w-[190px]">
+              <SelectValue placeholder="Filter by Student" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Students ({students.length})</SelectItem>
+              {students.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input
+            placeholder="Search student or topic..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full sm:w-[200px]"
+          />
+        </div>
+      </div>
 
       {filtered.length === 0 ? (
-        <Card><CardContent className="p-8 text-center text-muted-foreground">No classes here yet.</CardContent></Card>
+        <Card><CardContent className="p-8 text-center text-muted-foreground">No classes match your filter.</CardContent></Card>
       ) : (
         <div className="grid gap-3">
           {filtered.map(c => (
@@ -1636,10 +1753,33 @@ function ClassesPage() {
                     ))}
                   </div>
                 </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <input type="checkbox" id="customDayTimes" checked={form.useCustomDayTimes || false} onChange={(e) => setForm({ ...form, useCustomDayTimes: e.target.checked })} className="w-4 h-4" />
+                  <Label htmlFor="customDayTimes" className="cursor-pointer text-xs font-semibold text-primary">Different time for each day (e.g. Fri 6:30 PM & Sun 10:00 AM)</Label>
+                </div>
+
+                {form.useCustomDayTimes && form.recurringDays.length > 0 ? (
+                  <div className="p-3 bg-slate-50 border rounded-lg space-y-2">
+                    <Label className="text-xs font-bold text-slate-700">Set Time for Each Day:</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {form.recurringDays.map(dayNum => (
+                        <div key={dayNum} className="space-y-1">
+                          <Label className="text-xs">{dayLabels[dayNum]} Time</Label>
+                          <Input type="time" value={form.dayTimes?.[dayNum] || (dayNum === 5 ? '18:30' : dayNum === 0 ? '10:00' : form.time || '17:00')} onChange={(e) => {
+                            const dt = { ...(form.dayTimes || {}), [dayNum]: e.target.value };
+                            setForm({ ...form, dayTimes: dt });
+                          }} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="grid grid-cols-3 gap-2">
                   <div className="space-y-1"><Label>Start</Label><Input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></div>
                   <div className="space-y-1"><Label>End</Label><Input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></div>
-                  <div className="space-y-1"><Label>Time</Label><Input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></div>
+                  {!form.useCustomDayTimes && <div className="space-y-1"><Label>Time</Label><Input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></div>}
                 </div>
               </>
             ) : (

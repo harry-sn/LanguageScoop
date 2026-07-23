@@ -1022,9 +1022,12 @@ async function handle(request, context) {
       if (b.recurring && Array.isArray(b.recurringDays) && b.recurringDays.length > 0) {
         const start = new Date(b.startDate || new Date().toISOString().split('T')[0]);
         const end = new Date(b.endDate || new Date(start.getTime() + 90 * 24 * 3600 * 1000));
-        const timeStr = b.time || '17:00';
+        const defaultTimeStr = b.time || '17:00';
+        const dayTimes = b.dayTimes || {}; // e.g. { "5": "18:30", "0": "10:00" }
         for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-          if (b.recurringDays.includes(d.getDay())) {
+          const dayNum = d.getDay();
+          if (b.recurringDays.includes(dayNum)) {
+            const timeStr = dayTimes[dayNum] || dayTimes[String(dayNum)] || defaultTimeStr;
             const dateStr = d.toISOString().split('T')[0];
             const occ = new Date(`${dateStr}T${timeStr}:00+05:30`);
             startTimes.push(occ);
