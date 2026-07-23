@@ -11,12 +11,17 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 
 
 
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BGzKxr10ebrzCPYpglx2VL5fDjZa3D-K7YVOos3QODL88qI0kbG6sAftUie1DbOOe5Cewh0xuyHl0avHDDyF5rE';
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || 'E5j3kT7ls3HrT2_0jyH3NPTE-eFvNTuZiQDWrRRwaIc';
+
+try {
   webpush.setVapidDetails(
-    process.env.VAPID_SUBJECT || 'mailto:admin@example.com',
-    process.env.VAPID_PUBLIC_KEY,
-    process.env.VAPID_PRIVATE_KEY
+    process.env.VAPID_SUBJECT || 'mailto:admin@languagescoop.com',
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
   );
+} catch (e) {
+  console.error('VAPID setup warning:', e.message);
 }
 
 async function sendPushToUser(database, userId, payload) {
@@ -1801,6 +1806,23 @@ async function handle(request, context) {
       const homeworkToReview = await database.collection('homework').countDocuments({ teacherId: user.id, status: 'submitted' });
       const billableThisMonth = monthClasses.filter(c => c.billable).length;
       const monthlyRevenue = monthClasses.filter(c => c.billable).reduce((sum, c) => sum + (c.feeSnapshot || 0), 0);
+      // Check for classes starting within 15 minutes and send automated 15-min pre-class push alarm
+      const in15MinIso = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+      const upcoming15 = todayClasses.filter(c => c.status === 'upcoming' && c.startTime >= now.toISOString() && c.startTime <= in15MinIso);
+      for (const c of upcoming15) {
+        if (!c.reminded15MinTeacher) {
+          const timeStr = new Date(c.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
+          sendPushToUser(database, user.id, {
+            title: `🔔 Class starts in 15 minutes!`,
+            body: `${c.studentName} — ${c.topic || 'French Class'} at ${timeStr}. Tap to open Zoom.`,
+            url: '/',
+            tag: `alarm-15m-${c.id}`,
+            requireInteraction: true,
+          }).catch(() => {});
+          await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinTeacher: true } });
+        }
+      }
+
       return json({
         todayClasses,
         nextClass: upcomingNext[0] || null,

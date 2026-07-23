@@ -17,17 +17,18 @@ self.addEventListener('fetch', (event) => {
 
 self.addEventListener('push', (event) => {
   let data = {};
-  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { title: 'Language Scoop', body: event.data ? event.data.text() : '' }; }
-  const title = data.title || 'Language Scoop';
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = { title: 'Language Scoop 🔔', body: event.data ? event.data.text() : '' }; }
+  const title = data.title || 'Language Scoop 🔔';
   const options = {
-    body: data.body || '',
+    body: data.body || 'Class reminder',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
-    vibrate: [120, 60, 120],
+    vibrate: [500, 250, 500, 250, 500, 250, 1000],
     data: { url: data.url || '/' },
     tag: data.tag || 'ls-notification',
-    actions: data.actions || [],
-    requireInteraction: !!data.requireInteraction,
+    actions: data.actions || [{ action: 'open', title: 'Open Meeting 🚀' }],
+    requireInteraction: data.requireInteraction !== undefined ? data.requireInteraction : true,
+    renotify: true,
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });

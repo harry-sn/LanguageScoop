@@ -152,7 +152,51 @@ function useCountdown(targetIso) {
 }
 
 // -------- Landing Page --------
-// -------- Push Notification Helpers --------
+// -------- Bell Ringtone & Push Notification Helpers --------
+function playBellRingtone() {
+  if (typeof window === 'undefined') return;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === 'suspended') {
+      ctx.resume();
+    }
+
+    // Play 3 bell chime tones in sequence (Ding-Dong-Ding)
+    const tones = [
+      { freq: 880, start: 0, duration: 0.8 },       // A5 chime
+      { freq: 1108.73, start: 0.35, duration: 0.8 }, // C#6 chime
+      { freq: 1318.51, start: 0.7, duration: 1.2 }   // E6 chime
+    ];
+
+    tones.forEach(({ freq, start, duration }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+
+      // Metallic Bell envelope: quick attack, exponential decay
+      gain.gain.setValueAtTime(0, ctx.currentTime + start);
+      gain.gain.linearRampToValueAtTime(0.7, ctx.currentTime + start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + duration);
+    });
+
+    if ('vibrate' in navigator) {
+      navigator.vibrate([500, 250, 500, 250, 800]);
+    }
+  } catch (e) {
+    console.warn('Audio play error:', e);
+  }
+}
+
 const urlBase64ToUint8Array = (base64String) => {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
@@ -165,6 +209,7 @@ const urlBase64ToUint8Array = (base64String) => {
 function NotificationButton() {
   const [status, setStatus] = useState('idle'); // idle | enabled | denied | unsupported
   const [loading, setLoading] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -179,17 +224,26 @@ function NotificationButton() {
     setLoading(true);
     try {
       const perm = await Notification.requestPermission();
-      if (perm !== 'granted') { toast.error('Notification permission denied'); setStatus('denied'); return; }
+      if (perm !== 'granted') {
+        toast.error('Notification permission denied by browser');
+        setStatus('denied');
+        setShowGuide(true);
+        return;
+      }
       const reg = await navigator.serviceWorker.ready;
-      const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BHMt5Wz0xG7fxG-HHGrtY_6Bj9D4GUDs5VhIQK8HkoE2EmSiqP3QyfQbh60y1DdbXK2oFw83ndDGxpI3eqaQ6e0';
+      const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BGzKxr10ebrzCPYpglx2VL5fDjZa3D-K7YVOos3QODL88qI0kbG6sAftUie1DbOOe5Cewh0xuyHl0avHDDyF5rE';
       const subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(vapid),
       });
       await api('/push/subscribe', { method: 'POST', body: { subscription } });
       setStatus('enabled');
-      toast.success('Notifications enabled! Watch for the test notification.');
-    } catch (e) { toast.error(e.message || 'Failed to enable'); } finally { setLoading(false); }
+      playBellRingtone();
+      toast.success('🔔 15-Minute Class Alerts & Ringtone Enabled!');
+    } catch (e) {
+      toast.error(e.message || 'Failed to enable');
+      setShowGuide(true);
+    } finally { setLoading(false); }
   };
 
   const disable = async () => {
@@ -206,27 +260,94 @@ function NotificationButton() {
     } catch (e) { toast.error(e.message); } finally { setLoading(false); }
   };
 
-  const test = async () => {
-    try { await api('/push/test', { method: 'POST' }); toast.success('Test sent — check for the notification'); }
-    catch (e) { toast.error(e.message); }
+  const testPush = async () => {
+    try {
+      playBellRingtone();
+      await api('/push/test', { method: 'POST' });
+      toast.success('🔔 Test push & bell sent! Check your phone.');
+    } catch (e) { toast.error(e.message); }
   };
 
   if (status === 'unsupported') return null;
 
-  if (status === 'enabled') {
-    return (
-      <div className="flex gap-1">
-        <Button size="sm" variant="outline" onClick={test} className="gap-1.5"><Bell className="w-4 h-4 text-emerald-600" />On</Button>
-        <Button size="icon" variant="ghost" onClick={disable} disabled={loading} title="Disable notifications"><BellOff className="w-4 h-4" /></Button>
-      </div>
-    );
-  }
-
   return (
-    <Button size="sm" variant="outline" onClick={enable} disabled={loading || status === 'denied'} className="gap-1.5">
-      <Bell className="w-4 h-4" />
-      {status === 'denied' ? 'Blocked' : 'Enable Alerts'}
-    </Button>
+    <>
+      <div className="flex items-center gap-1">
+        {status === 'enabled' ? (
+          <>
+            <Button size="sm" variant="outline" onClick={testPush} className="gap-1.5 text-xs bg-emerald-50 text-emerald-800 border-emerald-300">
+              <Bell className="w-3.5 h-3.5 text-emerald-600 animate-pulse" /> 15m Bell On
+            </Button>
+            <Button size="icon" variant="ghost" onClick={() => setShowGuide(true)} title="Android Notification Settings Guide">
+              <Smartphone className="w-4 h-4 text-blue-600" />
+            </Button>
+            <Button size="icon" variant="ghost" onClick={disable} disabled={loading} title="Disable notifications">
+              <BellOff className="w-4 h-4 text-slate-400" />
+            </Button>
+          </>
+        ) : (
+          <Button size="sm" variant="outline" onClick={enable} disabled={loading} className="gap-1.5 text-xs bg-amber-50 text-amber-900 border-amber-300 font-medium">
+            <Bell className="w-3.5 h-3.5 text-amber-600" />
+            {status === 'denied' ? 'Alerts Blocked 📲' : 'Enable 15m Bell 🔔'}
+          </Button>
+        )}
+      </div>
+
+      <Dialog open={showGuide} onOpenChange={setShowGuide}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Smartphone className="w-5 h-5 text-blue-600" /> Android Phone Notification Guide
+            </DialogTitle>
+            <DialogDescription>
+              Ensure your Android phone rings 15 minutes before every class.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-sm">
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1">
+              <div className="font-semibold text-amber-900 flex items-center gap-1.5">
+                <Volume2 className="w-4 h-4" /> 1. In-App Bell Sound Test
+              </div>
+              <p className="text-xs text-amber-800">
+                Click below to verify that your phone's speaker plays the class bell ringtone:
+              </p>
+              <Button size="sm" onClick={playBellRingtone} className="mt-1 bg-amber-500 hover:bg-amber-600 text-slate-900 font-bold gap-1.5">
+                <Bell className="w-3.5 h-3.5" /> Ring Bell Sound Now 🔔
+              </Button>
+            </div>
+
+            <div className="space-y-2 border rounded-lg p-3 bg-slate-50">
+              <div className="font-semibold text-slate-900">2. Chrome Android Permissions</div>
+              <p className="text-xs text-muted-foreground">
+                In Android Chrome, tap the <strong>Lock icon</strong> or 3 dots next to <code>language-scoop.vercel.app</code> $\rightarrow$ <strong>Permissions</strong> $\rightarrow$ Set <strong>Notifications</strong> to <strong>Allow</strong>.
+              </p>
+            </div>
+
+            <div className="space-y-2 border rounded-lg p-3 bg-slate-50">
+              <div className="font-semibold text-slate-900">3. Android Phone Notification Settings</div>
+              <p className="text-xs text-muted-foreground">
+                Open phone <strong>Settings</strong> $\rightarrow$ <strong>Apps</strong> $\rightarrow$ <strong>Chrome</strong> (or Language Scoop) $\rightarrow$ <strong>Notifications</strong> $\rightarrow$ Turn on <strong>Allow Sound and Vibration</strong>.
+              </p>
+            </div>
+
+            <div className="space-y-2 border rounded-lg p-3 bg-slate-50">
+              <div className="font-semibold text-slate-900">4. Battery Optimization (Crucial for Android)</div>
+              <p className="text-xs text-muted-foreground">
+                Go to Android <strong>Settings</strong> $\rightarrow$ <strong>Battery</strong> $\rightarrow$ <strong>Unrestricted</strong> for Chrome so Android won't silence background alerts when your screen is turned off.
+              </p>
+            </div>
+
+            <div className="pt-2 flex justify-between gap-2">
+              <Button variant="outline" size="sm" onClick={testPush} className="gap-1.5 text-xs">
+                <Bell className="w-3.5 h-3.5 text-emerald-600" /> Send Test Push 📲
+              </Button>
+              <Button size="sm" onClick={() => setShowGuide(false)}>Got It 👍</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -794,6 +915,9 @@ function TeacherDashboard({ onNavigate }) {
   const [data, setData] = useState(null);
   const [attCls, setAttCls] = useState(null);
   const [editCls, setEditCls] = useState(null);
+  const [alarmClass, setAlarmClass] = useState(null);
+  const chimedRef = useRef({});
+
   const nextClass = data?.nextClass;
   const countdown = useCountdown(nextClass?.startTime);
 
@@ -801,6 +925,36 @@ function TeacherDashboard({ onNavigate }) {
     try { setData(await api('/dashboard')); } catch (e) { toast.error(e.message); }
   };
   useEffect(() => { load(); }, []);
+
+  // Monitor upcoming classes for 15-minute bell alarm
+  useEffect(() => {
+    const check15MinAlarm = () => {
+      if (!data?.todayClasses) return;
+      const nowMs = Date.now();
+      const upcoming15 = data.todayClasses.find(c => {
+        if (c.status !== 'upcoming') return false;
+        const diff = new Date(c.startTime).getTime() - nowMs;
+        return diff > 0 && diff <= 15 * 60 * 1000;
+      });
+
+      if (upcoming15) {
+        const isDismissed = typeof sessionStorage !== 'undefined' && sessionStorage.getItem(`dismissed_alarm_${upcoming15.id}`);
+        if (!isDismissed) {
+          setAlarmClass(upcoming15);
+          if (!chimedRef.current[upcoming15.id]) {
+            chimedRef.current[upcoming15.id] = true;
+            playBellRingtone();
+          }
+        }
+      } else {
+        setAlarmClass(null);
+      }
+    };
+
+    check15MinAlarm();
+    const interval = setInterval(check15MinAlarm, 10000);
+    return () => clearInterval(interval);
+  }, [data]);
 
   const deleteClass = async (c) => {
     if (!confirm(`Are you sure you want to delete this class with ${c.studentName}?`)) return;
@@ -836,6 +990,45 @@ function TeacherDashboard({ onNavigate }) {
         <h1 className="text-2xl font-bold tracking-tight">Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'} 👋</h1>
         <p className="text-muted-foreground">{fmtDateLong(new Date().toISOString())}</p>
       </div>
+
+      {alarmClass && (
+        <Card className="bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 text-white border-0 shadow-xl animate-pulse">
+          <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-white/20 rounded-full animate-bounce">
+                <Bell className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 text-amber-100 text-xs font-bold uppercase tracking-wider">
+                  <Sparkles className="w-4 h-4 text-amber-200" /> 15-Minute Class Alarm Bell 🔔
+                </div>
+                <h2 className="text-xl font-extrabold mt-0.5">
+                  Class with {alarmClass.studentName} starts in {Math.max(1, Math.ceil((new Date(alarmClass.startTime).getTime() - Date.now()) / 60000))} mins!
+                </h2>
+                <p className="text-xs text-amber-100 mt-0.5">
+                  {alarmClass.topic || 'French Class'} · Scheduled at {fmtTime(alarmClass.startTime)}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center">
+              <Button size="sm" variant="secondary" onClick={playBellRingtone} className="gap-1.5 font-semibold text-slate-900 bg-white hover:bg-slate-100">
+                <Bell className="w-4 h-4 text-amber-600" /> Ring Bell Sound 🔔
+              </Button>
+              {alarmClass.mode === 'online' && alarmClass.meetingLink && (
+                <Button size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold gap-1.5" onClick={() => window.open(alarmClass.meetingLink, '_blank')}>
+                  <Video className="w-4 h-4" /> Open Zoom
+                </Button>
+              )}
+              <Button size="sm" variant="ghost" className="text-white hover:bg-white/20" onClick={() => {
+                if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(`dismissed_alarm_${alarmClass.id}`, 'true');
+                setAlarmClass(null);
+              }}>
+                Dismiss ✕
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {nextClass && (
         <Card className="bg-gradient-to-br from-primary to-blue-700 text-primary-foreground border-0 shadow-lg">
