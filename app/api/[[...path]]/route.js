@@ -1164,7 +1164,7 @@ async function handle(request, context) {
         const newStartIso = new Date(rescheduledStartTime).toISOString();
         const newEndIso = new Date(new Date(rescheduledStartTime).getTime() + duration * 60000).toISOString();
         rescheduledClass = {
-          id: randomUUID(),
+          id: uuidv4(),
           teacherId: cls.teacherId,
           studentId: cls.studentId,
           studentName: cls.studentName,
