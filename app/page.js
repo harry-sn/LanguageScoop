@@ -913,6 +913,7 @@ function AttendanceDialog({ cls, open, onClose, onDone }) {
   const [status, setStatus] = useState('present');
   const [isBillable, setIsBillable] = useState(true);
   const [notes, setNotes] = useState('');
+  const [rescheduledStartTime, setRescheduledStartTime] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -920,14 +921,29 @@ function AttendanceDialog({ cls, open, onClose, onDone }) {
       setStatus(cls.status === 'upcoming' ? 'present' : cls.status);
       setIsBillable(cls.isBillable !== undefined ? cls.isBillable : true);
       setNotes(cls.notes || '');
+      if (cls.startTime) {
+        const d = new Date(cls.startTime);
+        d.setDate(d.getDate() + 1);
+        const tzOffset = d.getTimezoneOffset() * 60000;
+        const localIso = new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+        setRescheduledStartTime(localIso);
+      }
     }
   }, [cls]);
 
   const save = async () => {
     setSaving(true);
     try {
-      await api(`/classes/${cls.id}/attendance`, { method: 'POST', body: { status, isBillable, notes } });
-      toast.success('Attendance saved');
+      const payload = { status, isBillable, notes };
+      if (status === 'rescheduled' && rescheduledStartTime) {
+        payload.rescheduledStartTime = new Date(rescheduledStartTime).toISOString();
+      }
+      await api(`/classes/${cls.id}/attendance`, { method: 'POST', body: payload });
+      if (status === 'rescheduled') {
+        toast.success('Class marked Rescheduled & new class scheduled! 📅');
+      } else {
+        toast.success('Attendance saved');
+      }
       onDone(); onClose();
     } catch (e) { toast.error(e.message); } finally { setSaving(false); }
   };
@@ -964,6 +980,23 @@ function AttendanceDialog({ cls, open, onClose, onDone }) {
             </button>
           ))}
         </div>
+
+        {status === 'rescheduled' && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-1.5">
+            <Label className="text-amber-900 font-bold text-xs flex items-center gap-1.5">
+              <CalendarDays className="w-4 h-4 text-amber-600" /> Reschedule Class To (New Date & Time)
+            </Label>
+            <Input
+              type="datetime-local"
+              value={rescheduledStartTime}
+              onChange={(e) => setRescheduledStartTime(e.target.value)}
+              className="bg-white border-amber-300 text-slate-900"
+            />
+            <p className="text-[11px] text-amber-800">
+              Today's class will be marked <strong>Rescheduled</strong> (0 credits deducted), and a new class will automatically be saved for {cls.studentName} at this new time!
+            </p>
+          </div>
+        )}
 
         <div className="flex items-center justify-between p-3 bg-slate-50 border rounded-lg">
           <div>

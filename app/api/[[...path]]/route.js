@@ -1152,12 +1152,43 @@ async function handle(request, context) {
       const id = pathParts[1];
       const cls = await database.collection('classes').findOne({ id });
       if (!cls || cls.teacherId !== user.id) return json({ error: 'Not found' }, 404);
-      const { status, isBillable, notes } = body;
+      const { status, isBillable, notes, rescheduledStartTime } = body;
       if (notes !== undefined) {
         await database.collection('classes').updateOne({ id }, { $set: { notes } });
       }
       const updated = await processAttendanceDeduction(database, cls, status || cls.status, isBillable, user.id);
-      return json({ class: updated });
+
+      let rescheduledClass = null;
+      if (status === 'rescheduled' && rescheduledStartTime) {
+        const duration = cls.duration || 60;
+        const newStartIso = new Date(rescheduledStartTime).toISOString();
+        const newEndIso = new Date(new Date(rescheduledStartTime).getTime() + duration * 60000).toISOString();
+        rescheduledClass = {
+          id: randomUUID(),
+          teacherId: cls.teacherId,
+          studentId: cls.studentId,
+          studentName: cls.studentName,
+          studentTimezone: cls.studentTimezone || 'Asia/Kolkata',
+          startTime: newStartIso,
+          endTime: newEndIso,
+          duration: duration,
+          mode: cls.mode || 'online',
+          topic: cls.topic ? `${cls.topic} (Rescheduled)` : 'Rescheduled Class',
+          meetingLink: cls.meetingLink || '',
+          meetingId: cls.meetingId || '',
+          passcode: cls.passcode || '',
+          platform: cls.platform || '',
+          classroomLocation: cls.classroomLocation || '',
+          status: 'upcoming',
+          packId: cls.packId || null,
+          notes: `Rescheduled from ${new Date(cls.startTime).toLocaleDateString()}`,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await database.collection('classes').insertOne(rescheduledClass);
+      }
+
+      return json({ class: updated, rescheduledClass });
     }
 
     // ---- BILLING ----
