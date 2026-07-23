@@ -31,7 +31,21 @@ export default function RootLayout({ children }) {
         <meta name="theme-color" content="#0F766E" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <link rel="icon" href="/favicon.png" />
-        <script dangerouslySetInnerHTML={{__html:'window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){});});}'}} />
+        <script dangerouslySetInnerHTML={{__html:`
+          window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);
+          if (typeof window !== "undefined") {
+            if ("serviceWorker" in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(regs) {
+                for (var r of regs) { r.unregister(); }
+              });
+            }
+            if ("caches" in window) {
+              caches.keys().then(function(keys) {
+                for (var k of keys) { caches.delete(k); }
+              });
+            }
+          }
+        `}} />
       </head>
       <body suppressHydrationWarning>
         <Providers>{children}</Providers>
