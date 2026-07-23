@@ -33,17 +33,10 @@ export default function RootLayout({ children }) {
         <link rel="icon" href="/favicon.png" />
         <script dangerouslySetInnerHTML={{__html:`
           window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);
-          if (typeof window !== "undefined") {
-            if ("serviceWorker" in navigator) {
-              navigator.serviceWorker.getRegistrations().then(function(regs) {
-                for (var r of regs) { r.unregister(); }
-              });
-            }
-            if ("caches" in window) {
-              caches.keys().then(function(keys) {
-                for (var k of keys) { caches.delete(k); }
-              });
-            }
+          if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+            window.addEventListener("load", function() {
+              navigator.serviceWorker.register("/sw.js").catch(function(e){ console.log("SW reg error", e); });
+            });
           }
         `}} />
       </head>

@@ -237,27 +237,42 @@ function NotificationButton() {
   const enable = async () => {
     setLoading(true);
     try {
+      // 1. Request notification permission directly first
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
-        toast.error('Notification permission denied by browser');
+        toast.error('Notification permission blocked by browser/phone settings.');
         setStatus('denied');
-        setShowGuide(true);
         setShowPromptModal(false);
+        setShowGuide(true);
         return;
       }
-      const reg = await navigator.serviceWorker.ready;
+
+      // 2. Register or fetch Service Worker
+      let reg = await navigator.serviceWorker.getRegistration('/sw.js');
+      if (!reg) {
+        reg = await navigator.serviceWorker.register('/sw.js');
+      }
+
       const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BGzKxr10ebrzCPYpglx2VL5fDjZa3D-K7YVOos3QODL88qI0kbG6sAftUie1DbOOe5Cewh0xuyHl0avHDDyF5rE';
-      const subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapid),
-      });
+      
+      let subscription = await reg.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapid),
+        });
+      }
+
       await api('/push/subscribe', { method: 'POST', body: { subscription } });
       setStatus('enabled');
       setShowPromptModal(false);
+      setShowGuide(false);
       playBellRingtone();
       toast.success('🔔 15-Minute Class Alerts & Ringtone Enabled!');
     } catch (e) {
-      toast.error(e.message || 'Failed to enable');
+      console.error('Push enable error:', e);
+      toast.error(e.message || 'Failed to enable notifications');
+      setShowPromptModal(false);
       setShowGuide(true);
     } finally { setLoading(false); }
   };
