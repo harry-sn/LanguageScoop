@@ -2971,11 +2971,55 @@ function PaymentsPage() {
 // -------- Calendar (Teacher) --------
 function CalendarPage() {
   const [classes, setClasses] = useState([]);
+  const [students, setStudents] = useState([]);
   const [cursor, setCursor] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(null);
+  const [viewMode, setViewMode] = useState('week'); // 'week' | 'month'
+  const [quickSlot, setQuickSlot] = useState(null); // { date: Date, hour: number }
+  const [quickStudentId, setQuickStudentId] = useState('');
+  const [quickTopic, setQuickTopic] = useState('');
+  const [quickDuration, setQuickDuration] = useState(60);
+  const [quickSaving, setQuickSaving] = useState(false);
 
-  useEffect(() => { api('/classes').then(d => setClasses(d.classes)).catch(e => toast.error(e.message)); }, []);
+  const loadData = async () => {
+    try {
+      const [c, s] = await Promise.all([api('/classes'), api('/students')]);
+      setClasses(c.classes || []);
+      setStudents(s.students || []);
+    } catch (e) { toast.error(e.message); }
+  };
 
+  useEffect(() => { loadData(); }, []);
+
+  // Week helpers
+  const getMonday = (d) => {
+    const dt = new Date(d);
+    const day = dt.getDay();
+    const diff = dt.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(dt.setDate(diff));
+  };
+
+  const monday = getMonday(cursor);
+  const weekDays = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(d.getDate() + i);
+    return d;
+  });
+
+  // Hours displayed in weekly view (8:00 AM to 9:00 PM)
+  const hours = Array.from({ length: 14 }, (_, i) => 8 + i);
+
+  const classesOnDay = (d) => classes.filter(c => {
+    const s = new Date(c.startTime);
+    return d && s.getFullYear() === d.getFullYear() && s.getMonth() === d.getMonth() && s.getDate() === d.getDate();
+  });
+
+  const classesInSlot = (d, hr) => classesOnDay(d).filter(c => {
+    const s = new Date(c.startTime);
+    return s.getHours() === hr;
+  });
+
+  // Month view helpers
   const year = cursor.getFullYear();
   const month = cursor.getMonth();
   const first = new Date(year, month, 1);
@@ -2985,55 +3029,236 @@ function CalendarPage() {
   for (let i = 0; i < startDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
 
-  const classesOn = (d) => classes.filter(c => {
-    const s = new Date(c.startTime);
-    return d && s.getFullYear() === d.getFullYear() && s.getMonth() === d.getMonth() && s.getDate() === d.getDate();
-  });
-
+  const weekRangeLabel = `${weekDays[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${weekDays[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
   const monthLabel = cursor.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+  const handleQuickAdd = async () => {
+    if (!quickStudentId) return toast.error('Please select a student');
+    if (!quickSlot) return;
+    setQuickSaving(true);
+    try {
+      const student = students.find(s => s.id === quickStudentId);
+      const d = new Date(quickSlot.date);
+      d.setHours(quickSlot.hour, 0, 0, 0);
+      const tzOffset = d.getTimezoneOffset() * 60000;
+      const localIso = new Date(d.getTime() - tzOffset).toISOString().slice(0, 16);
+
+      const payload = {
+        studentId: quickStudentId,
+        startTime: new Date(localIso).toISOString(),
+        duration: quickDuration,
+        mode: student?.mode === 'hybrid' ? 'online' : (student?.mode || 'online'),
+        topic: quickTopic,
+        useStudentLink: true
+      };
+
+      await api('/classes', { method: 'POST', body: payload });
+      toast.success(`Class scheduled for ${student?.name || 'Student'}! 🚀`);
+      setQuickSlot(null); setQuickStudentId(''); setQuickTopic('');
+      loadData();
+    } catch (e) { toast.error(e.message); } finally { setQuickSaving(false); }
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <h1 className="text-2xl font-bold">Calendar</h1>
-        <div className="flex items-center gap-2">
-          <Button size="icon" variant="outline" onClick={() => setCursor(new Date(year, month - 1, 1))}><ChevronLeft className="w-4 h-4" /></Button>
-          <div className="font-semibold min-w-[140px] text-center">{monthLabel}</div>
-          <Button size="icon" variant="outline" onClick={() => setCursor(new Date(year, month + 1, 1))}><ChevronRight className="w-4 h-4" /></Button>
-          <Button variant="outline" size="sm" onClick={() => setCursor(new Date())}>Today</Button>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <CalendarDays className="w-6 h-6 text-primary" /> Schedule & Free Slots
+          </h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            View your weekly schedule and assign free time slots to new students in 1 click.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Tabs value={viewMode} onValueChange={setViewMode} className="w-auto">
+            <TabsList>
+              <TabsTrigger value="week" className="gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" /> Weekly Timetable
+              </TabsTrigger>
+              <TabsTrigger value="month">Monthly Grid</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          <div className="flex items-center gap-1.5 border rounded-lg p-1 bg-background">
+            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => {
+              const d = new Date(cursor);
+              if (viewMode === 'week') d.setDate(d.getDate() - 7);
+              else d.setMonth(d.getMonth() - 1);
+              setCursor(d);
+            }}><ChevronLeft className="w-4 h-4" /></Button>
+
+            <div className="font-semibold text-xs px-2 min-w-[130px] text-center">
+              {viewMode === 'week' ? weekRangeLabel : monthLabel}
+            </div>
+
+            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => {
+              const d = new Date(cursor);
+              if (viewMode === 'week') d.setDate(d.getDate() + 7);
+              else d.setMonth(d.getMonth() + 1);
+              setCursor(d);
+            }}><ChevronRight className="w-4 h-4" /></Button>
+            
+            <Button variant="secondary" size="sm" className="h-8 text-xs font-medium" onClick={() => setCursor(new Date())}>Today</Button>
+          </div>
         </div>
       </div>
-      <Card><CardContent className="p-2 md:p-4">
-        <div className="grid grid-cols-7 gap-1 text-xs text-center text-muted-foreground mb-2 font-medium">
-          {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d}>{d}</div>)}
-        </div>
-        <div className="grid grid-cols-7 gap-1">
-          {cells.map((d, i) => {
-            const onCells = d ? classesOn(d) : [];
-            const isToday = d && d.toDateString() === new Date().toDateString();
-            return (
-              <button key={i} disabled={!d} onClick={() => d && setSelectedDay(d)} className={`aspect-square md:aspect-[4/3] p-1 md:p-2 rounded-md border text-left overflow-hidden transition ${!d ? 'invisible' : 'hover:border-primary'} ${isToday ? 'border-primary bg-blue-50' : 'border-slate-200'}`}>
-                <div className={`text-sm ${isToday ? 'font-bold text-primary' : ''}`}>{d?.getDate()}</div>
-                <div className="mt-1 space-y-0.5">
-                  {onCells.slice(0, 2).map(c => (
-                    <div key={c.id} className={`text-[10px] md:text-xs px-1 py-0.5 rounded truncate ${c.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : c.status === 'absent' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'}`}>
-                      {fmtTime(c.startTime)} {c.studentName.split(' ')[0]}
+
+      {viewMode === 'week' ? (
+        <Card className="border shadow-sm">
+          <CardHeader className="py-3 px-4 bg-slate-50/50 border-b flex flex-row items-center justify-between">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Weekly Availability Matrix (8:00 AM – 9:00 PM)
+            </CardTitle>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded bg-blue-100 border border-blue-300 inline-block"></span> Booked Class
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded bg-emerald-50 border border-emerald-300 border-dashed inline-block"></span> Free / Open Slot
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0 overflow-x-auto">
+            <div className="min-w-[800px]">
+              {/* Header row with 7 days */}
+              <div className="grid grid-cols-8 border-b text-center text-xs font-semibold bg-slate-100/70 sticky top-0 z-10">
+                <div className="p-2.5 text-muted-foreground border-r font-mono">Time</div>
+                {weekDays.map((d, i) => {
+                  const isToday = d.toDateString() === new Date().toDateString();
+                  const count = classesOnDay(d).length;
+                  return (
+                    <div key={i} className={`p-2 border-r ${isToday ? 'bg-primary/10 text-primary font-bold' : 'text-slate-700'}`}>
+                      <div>{d.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                      <div className="text-xs font-normal opacity-80">{d.getDate()} {d.toLocaleDateString('en-US', { month: 'short' })}</div>
+                      {count > 0 ? (
+                        <Badge variant="secondary" className="mt-1 text-[10px] px-1.5 py-0 h-4">{count} class{count > 1 ? 'es' : ''}</Badge>
+                      ) : (
+                        <span className="text-[10px] text-emerald-600 block mt-1 font-medium">Free all day</span>
+                      )}
                     </div>
+                  );
+                })}
+              </div>
+
+              {/* Time slot rows */}
+              {hours.map(hr => {
+                const hourLabel = `${hr === 12 ? 12 : hr % 12}:00 ${hr >= 12 ? 'PM' : 'AM'}`;
+                return (
+                  <div key={hr} className="grid grid-cols-8 border-b text-xs hover:bg-slate-50/30 transition">
+                    <div className="p-2 text-center text-muted-foreground border-r font-mono text-[11px] flex items-center justify-center bg-slate-50/40">
+                      {hourLabel}
+                    </div>
+                    {weekDays.map((d, i) => {
+                      const slots = classesInSlot(d, hr);
+                      const isBooked = slots.length > 0;
+                      return (
+                        <div key={i} className="p-1 border-r min-h-[64px] flex flex-col gap-1 justify-center relative group">
+                          {isBooked ? (
+                            slots.map(c => (
+                              <button key={c.id} onClick={() => setSelectedDay(d)} className={`p-1.5 rounded-md border text-left text-xs transition shadow-sm w-full ${c.status === 'completed' ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-blue-50 border-blue-300 text-blue-900 hover:bg-blue-100'}`}>
+                                <div className="font-bold truncate text-[11px]">{c.studentName}</div>
+                                <div className="text-[10px] opacity-80 font-mono">{fmtTime(c.startTime)}</div>
+                              </button>
+                            ))
+                          ) : (
+                            <button
+                              onClick={() => setQuickSlot({ date: d, hour: hr })}
+                              className="w-full h-full min-h-[50px] rounded-md border border-dashed border-slate-200 hover:border-emerald-400 bg-slate-50/50 hover:bg-emerald-50/60 text-slate-400 hover:text-emerald-700 transition flex flex-col items-center justify-center gap-0.5 group-hover:shadow-sm"
+                            >
+                              <Plus className="w-3.5 h-3.5 opacity-60 group-hover:scale-110 transition-transform" />
+                              <span className="text-[10px] font-semibold">Free Slot</span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card><CardContent className="p-2 md:p-4">
+          <div className="grid grid-cols-7 gap-1 text-xs text-center text-muted-foreground mb-2 font-medium">
+            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d => <div key={d}>{d}</div>)}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((d, i) => {
+              const onCells = d ? classesOnDay(d) : [];
+              const isToday = d && d.toDateString() === new Date().toDateString();
+              return (
+                <button key={i} disabled={!d} onClick={() => d && setSelectedDay(d)} className={`aspect-square md:aspect-[4/3] p-1 md:p-2 rounded-md border text-left overflow-hidden transition ${!d ? 'invisible' : 'hover:border-primary'} ${isToday ? 'border-primary bg-blue-50' : 'border-slate-200'}`}>
+                  <div className={`text-sm ${isToday ? 'font-bold text-primary' : ''}`}>{d?.getDate()}</div>
+                  <div className="mt-1 space-y-0.5">
+                    {onCells.slice(0, 2).map(c => (
+                      <div key={c.id} className={`text-[10px] md:text-xs px-1 py-0.5 rounded truncate ${c.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : c.status === 'absent' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-800'}`}>
+                        {fmtTime(c.startTime)} {c.studentName.split(' ')[0]}
+                      </div>
+                    ))}
+                    {onCells.length > 2 && <div className="text-[10px] text-muted-foreground">+{onCells.length - 2} more</div>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </CardContent></Card>
+      )}
+
+      {/* Quick Schedule Modal from Free Slot */}
+      <Dialog open={!!quickSlot} onOpenChange={(o) => { if (!o) setQuickSlot(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-800">
+              <Plus className="w-5 h-5 text-emerald-600" /> Schedule Class in Free Slot
+            </DialogTitle>
+            <DialogDescription>
+              {quickSlot && `${quickSlot.date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })} at ${quickSlot.hour === 12 ? 12 : quickSlot.hour % 12}:00 ${quickSlot.hour >= 12 ? 'PM' : 'AM'}`}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label>Assign to Student</Label>
+              <Select value={quickStudentId} onValueChange={setQuickStudentId}>
+                <SelectTrigger><SelectValue placeholder="Choose student" /></SelectTrigger>
+                <SelectContent>
+                  {students.map(s => (
+                    <SelectItem key={s.id} value={s.id}>{s.name} ({s.level})</SelectItem>
                   ))}
-                  {onCells.length > 2 && <div className="text-[10px] text-muted-foreground">+{onCells.length - 2} more</div>}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </CardContent></Card>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Topic / Lesson (optional)</Label>
+              <Input value={quickTopic} onChange={(e) => setQuickTopic(e.target.value)} placeholder="Grammar & Conversation..." />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Duration (mins)</Label>
+              <Input type="number" value={quickDuration} onChange={(e) => setQuickDuration(Number(e.target.value))} />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setQuickSlot(null)}>Cancel</Button>
+            <Button onClick={handleQuickAdd} disabled={quickSaving} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5">
+              <Check className="w-4 h-4" /> {quickSaving ? 'Scheduling...' : 'Schedule Class Here'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!selectedDay} onOpenChange={(o) => { if (!o) setSelectedDay(null); }}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{selectedDay && fmtDateLong(selectedDay.toISOString())}</DialogTitle></DialogHeader>
           <div className="space-y-2">
-            {selectedDay && classesOn(selectedDay).length === 0 ? <div className="text-center py-6 text-muted-foreground">No classes this day</div> :
-              selectedDay && classesOn(selectedDay).map(c => <ClassCard key={c.id} cls={c} />)
+            {selectedDay && classesOnDay(selectedDay).length === 0 ? <div className="text-center py-6 text-muted-foreground">No classes this day</div> :
+              selectedDay && classesOnDay(selectedDay).map(c => <ClassCard key={c.id} cls={c} />)
             }
           </div>
         </DialogContent>
