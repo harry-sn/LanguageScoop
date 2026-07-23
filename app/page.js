@@ -18,7 +18,8 @@ import {
   Video, MapPin, Copy, LogOut, Plus, GraduationCap, Clock,
   CheckCircle2, XCircle, AlertCircle, Sparkles, Check, Home, Send,
   Brain, Wallet, ChevronLeft, ChevronRight, Download, Upload, Printer, Trash2, X, MoreHorizontal,
-  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music, Lock, Globe, Eye, EyeOff, Pencil
+  Bell, BellOff, Paperclip, FileText, Image as ImageIcon, Music, Lock, Globe, Eye, EyeOff, Pencil,
+  Smartphone, Volume2
 } from 'lucide-react';
 
 const API = '/api';
