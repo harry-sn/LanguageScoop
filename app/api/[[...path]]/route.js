@@ -844,6 +844,26 @@ async function handle(request, context) {
         }
       }
       await database.collection('students').updateOne({ id }, { $set: updates });
+
+      // Automatically sync all upcoming classes with the student's updated meeting info
+      const classUpdates = {
+        studentName: updates.name,
+        studentTimezone: updates.timezone,
+      };
+      if (updates.permanentMeetingLink) {
+        classUpdates.meetingLink = updates.permanentMeetingLink;
+        classUpdates.platform = detectPlatform(updates.permanentMeetingLink) || '';
+        classUpdates.meetingId = updates.permanentMeetingId || '';
+        classUpdates.passcode = updates.permanentMeetingPasscode || '';
+      }
+      if (updates.classroomLocation) {
+        classUpdates.classroomLocation = updates.classroomLocation;
+      }
+      await database.collection('classes').updateMany(
+        { studentId: id, status: 'upcoming' },
+        { $set: classUpdates }
+      );
+
       const updated = await database.collection('students').findOne({ id });
       return json({ student: updated });
     }
@@ -1009,6 +1029,21 @@ async function handle(request, context) {
       if (from) filter.startTime = { ...(filter.startTime || {}), $gte: from };
       if (to) filter.startTime = { ...(filter.startTime || {}), $lte: to };
       const classes = await database.collection('classes').find(filter).sort({ startTime: 1 }).toArray();
+      const studentIds = [...new Set(classes.map(c => c.studentId))];
+      if (studentIds.length > 0) {
+        const studentList = await database.collection('students').find({ id: { $in: studentIds } }).toArray();
+        const sMap = {};
+        for (const s of studentList) sMap[s.id] = s;
+        for (const c of classes) {
+          const s = sMap[c.studentId];
+          if (s && s.permanentMeetingLink && c.mode === 'online') {
+            c.meetingLink = s.permanentMeetingLink;
+            c.meetingId = s.permanentMeetingId || c.meetingId;
+            c.passcode = s.permanentMeetingPasscode || c.passcode;
+            c.platform = s.permanentMeetingPlatform || c.platform;
+          }
+        }
+      }
       return json({ classes });
     }
 
@@ -1826,9 +1861,30 @@ async function handle(request, context) {
         }
       }
 
+      const sMap = {};
+      for (const s of students) sMap[s.id] = s;
+
+      for (const c of todayClasses) {
+        const s = sMap[c.studentId];
+        if (s && s.permanentMeetingLink && c.mode === 'online') {
+          c.meetingLink = s.permanentMeetingLink;
+          c.meetingId = s.permanentMeetingId || c.meetingId;
+          c.passcode = s.permanentMeetingPasscode || c.passcode;
+          c.platform = s.permanentMeetingPlatform || c.platform;
+        }
+      }
+      const nextCls = upcomingNext[0] || null;
+      if (nextCls && sMap[nextCls.studentId] && sMap[nextCls.studentId].permanentMeetingLink && nextCls.mode === 'online') {
+        const s = sMap[nextCls.studentId];
+        nextCls.meetingLink = s.permanentMeetingLink;
+        nextCls.meetingId = s.permanentMeetingId || nextCls.meetingId;
+        nextCls.passcode = s.permanentMeetingPasscode || nextCls.passcode;
+        nextCls.platform = s.permanentMeetingPlatform || nextCls.platform;
+      }
+
       return json({
         todayClasses,
-        nextClass: upcomingNext[0] || null,
+        nextClass: nextCls,
         stats: {
           classesToday: todayClasses.length,
           onlineToday: todayClasses.filter(c => c.mode === 'online').length,
