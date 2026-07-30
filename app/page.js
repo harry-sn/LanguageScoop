@@ -811,7 +811,7 @@ function EditClassDialog({ cls, open, onClose, onDone }) {
   );
 }
 
-function ClassCard({ cls, onMarkAttendance, onEditClass, onDeleteClass, isStudent }) {
+function ClassCard({ cls, onMarkAttendance, onEditClass, onDeleteClass, isStudent, selectable, isSelected, onToggleSelect }) {
   const countdown = useCountdown(cls.startTime);
   const isUpcoming = new Date(cls.startTime) > new Date();
   const isPast = new Date(cls.endTime || cls.startTime) < new Date();
@@ -836,73 +836,85 @@ function ClassCard({ cls, onMarkAttendance, onEditClass, onDeleteClass, isStuden
   };
 
   return (
-    <Card className="hover:shadow-md transition-shadow">
-      <CardContent className="p-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-lg font-semibold">
-            {isStudent ? fmtTime(cls.startTime, studentTz) : fmtTime(cls.startTime, teacherTz)}
-          </span>
-          {!isStudent && studentTz && studentTz !== teacherTz && (
-            <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 gap-1 text-xs font-normal">
-              <Globe className="w-3 h-3" />
-              {fmtTime(cls.startTime, studentTz)} ({studentTz.split('/')[1]?.replace('_', ' ') || studentTz})
-            </Badge>
-          )}
-          <Badge variant="outline" className={statusColor}>
-            {cls.status === 'upcoming' && isPast ? 'Attendance Pending' : cls.status.charAt(0).toUpperCase() + cls.status.slice(1)}
-          </Badge>
-          {cls.billable && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Billable</Badge>}
-        </div>
-        <div className="mt-1 font-medium truncate">{isStudent ? (cls.topic || 'French Class') : cls.studentName}</div>
-        {!isStudent && cls.topic && <div className="text-sm text-muted-foreground truncate">{cls.topic}</div>}
-        <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground flex-wrap">
-          <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{cls.duration} min</span>
-          {cls.mode === 'online' ? (
-            <span className="flex items-center gap-1"><Video className="w-3.5 h-3.5" />{cls.platform === 'zoom' ? 'Zoom' : cls.platform === 'google_meet' ? 'Google Meet' : cls.platform === 'ms_teams' ? 'MS Teams' : 'Online'}</span>
-          ) : (
-            <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />Offline</span>
-          )}
-          {isUpcoming && countdown && <span className="text-primary font-medium">{countdown}</span>}
-        </div>
-        {cls.mode === 'offline' && cls.classroomLocation && (
-          <div className="mt-2 text-sm text-muted-foreground flex items-start gap-1">
-            <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /><span>{cls.classroomLocation}</span>
+    <Card className={`hover:shadow-md transition-shadow ${isSelected ? 'border-primary ring-1 ring-primary bg-primary/5' : ''}`}>
+      <CardContent className="p-4 flex items-start gap-3">
+        {selectable && (
+          <div className="pt-1 flex-shrink-0 cursor-pointer" onClick={(e) => { e.stopPropagation(); onToggleSelect?.(cls.id); }}>
+            <input
+              type="checkbox"
+              checked={!!isSelected}
+              onChange={() => {}}
+              className="w-5 h-5 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer accent-primary"
+            />
           </div>
         )}
-        <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">
-          <div className="flex flex-wrap gap-2">
-            {cls.mode === 'online' && cls.meetingLink && (
-              <>
-                <Button size="sm" onClick={openMeeting} className="gap-1.5">
-                  <Video className="w-4 h-4" />{isStudent ? 'Join Class' : 'Open Meeting'}
-                </Button>
-                <Button size="sm" variant="outline" onClick={copyLink} className="gap-1.5"><Copy className="w-4 h-4" />Copy Link</Button>
-              </>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-lg font-semibold">
+              {isStudent ? fmtTime(cls.startTime, studentTz) : fmtTime(cls.startTime, teacherTz)}
+            </span>
+            {!isStudent && studentTz && studentTz !== teacherTz && (
+              <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200 gap-1 text-xs font-normal">
+                <Globe className="w-3 h-3" />
+                {fmtTime(cls.startTime, studentTz)} ({studentTz.split('/')[1]?.replace('_', ' ') || studentTz})
+              </Badge>
             )}
-            {cls.mode === 'online' && !cls.meetingLink && (
-              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><AlertCircle className="w-3 h-3" />Meeting link missing</Badge>
-            )}
-            {!isStudent && (
-              <>
-                <Button size="sm" variant="outline" onClick={notifyStudent} className="gap-1.5"><Send className="w-4 h-4" />WhatsApp</Button>
-                {(cls.status === 'upcoming') && (
-                  <Button size="sm" variant="outline" onClick={() => onMarkAttendance?.(cls)} className="gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" />Mark Attendance
-                  </Button>
-                )}
-              </>
-            )}
+            <Badge variant="outline" className={statusColor}>
+              {cls.status === 'upcoming' && isPast ? 'Attendance Pending' : cls.status.charAt(0).toUpperCase() + cls.status.slice(1)}
+            </Badge>
+            {cls.billable && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">Billable</Badge>}
           </div>
-          {!isStudent && (
-            <div className="flex items-center gap-1 ml-auto">
-              <Button size="sm" variant="ghost" onClick={() => onEditClass?.(cls)} className="text-xs px-2" title="Edit Class Details & Time">
-                <Pencil className="w-3.5 h-3.5" />
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => onDeleteClass?.(cls)} className="text-xs px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50" title="Delete Class">
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
+          <div className="mt-1 font-medium truncate">{isStudent ? (cls.topic || 'French Class') : cls.studentName}</div>
+          {!isStudent && cls.topic && <div className="text-sm text-muted-foreground truncate">{cls.topic}</div>}
+          <div className="flex items-center gap-3 mt-2 text-sm text-muted-foreground flex-wrap">
+            <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{cls.duration} min</span>
+            {cls.mode === 'online' ? (
+              <span className="flex items-center gap-1"><Video className="w-3.5 h-3.5" />{cls.platform === 'zoom' ? 'Zoom' : cls.platform === 'google_meet' ? 'Google Meet' : cls.platform === 'ms_teams' ? 'MS Teams' : 'Online'}</span>
+            ) : (
+              <span className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" />Offline</span>
+            )}
+            {isUpcoming && countdown && <span className="text-primary font-medium">{countdown}</span>}
+          </div>
+          {cls.mode === 'offline' && cls.classroomLocation && (
+            <div className="mt-2 text-sm text-muted-foreground flex items-start gap-1">
+              <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" /><span>{cls.classroomLocation}</span>
             </div>
           )}
+          <div className="mt-3 flex flex-wrap gap-2 items-center justify-between">
+            <div className="flex flex-wrap gap-2">
+              {cls.mode === 'online' && cls.meetingLink && (
+                <>
+                  <Button size="sm" onClick={openMeeting} className="gap-1.5">
+                    <Video className="w-4 h-4" />{isStudent ? 'Join Class' : 'Open Meeting'}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={copyLink} className="gap-1.5"><Copy className="w-4 h-4" />Copy Link</Button>
+                </>
+              )}
+              {cls.mode === 'online' && !cls.meetingLink && (
+                <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 gap-1"><AlertCircle className="w-3 h-3" />Meeting link missing</Badge>
+              )}
+              {!isStudent && (
+                <>
+                  <Button size="sm" variant="outline" onClick={notifyStudent} className="gap-1.5"><Send className="w-4 h-4" />WhatsApp</Button>
+                  {(cls.status === 'upcoming') && (
+                    <Button size="sm" variant="outline" onClick={() => onMarkAttendance?.(cls)} className="gap-1.5">
+                      <CheckCircle2 className="w-4 h-4" />Mark Attendance
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+            {!isStudent && (
+              <div className="flex items-center gap-1 ml-auto">
+                <Button size="sm" variant="ghost" onClick={() => onEditClass?.(cls)} className="text-xs px-2" title="Edit Class Details & Time">
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => onDeleteClass?.(cls)} className="text-xs px-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50" title="Delete Class">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -1711,6 +1723,9 @@ function ClassesPage() {
   const [selectedStudentId, setSelectedStudentId] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [scheduleTz, setScheduleTz] = useState('Asia/Kolkata');
+  const [submitting, setSubmitting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [deletingBatch, setDeletingBatch] = useState(false);
   const empty = { studentId: '', startTime: '', duration: 60, mode: 'online', topic: '', useStudentLink: true, recurring: false, recurringDays: [], startDate: '', endDate: '', time: '17:00', useCustomDayTimes: false, dayTimes: {} };
   const [form, setForm] = useState(empty);
 
@@ -1727,6 +1742,7 @@ function ClassesPage() {
     try {
       await api(`/classes/${c.id}`, { method: 'DELETE' });
       toast.success('Class deleted');
+      setSelectedIds(prev => prev.filter(x => x !== c.id));
       load();
     } catch (e) { toast.error(e.message); }
   };
@@ -1746,7 +1762,33 @@ function ClassesPage() {
     return list;
   }, [classes, filter, selectedStudentId, searchQuery]);
 
+  const toggleSelect = (id) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
+  const toggleSelectAll = () => {
+    if (filtered.length > 0 && selectedIds.length === filtered.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filtered.map(c => c.id));
+    }
+  };
+
+  const deleteBatch = async () => {
+    if (selectedIds.length === 0) return;
+    if (!confirm(`Are you sure you want to delete ${selectedIds.length} selected class${selectedIds.length > 1 ? 'es' : ''}?`)) return;
+    setDeletingBatch(true);
+    try {
+      const res = await api('/classes/batch-delete', { method: 'POST', body: { ids: selectedIds } });
+      toast.success(`Deleted ${res.deletedCount || selectedIds.length} class${(res.deletedCount || selectedIds.length) > 1 ? 'es' : ''}`);
+      setSelectedIds([]);
+      load();
+    } catch (e) { toast.error(e.message); } finally { setDeletingBatch(false); }
+  };
+
   const create = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const payload = { ...form };
       if (!payload.recurring && payload.startTime) {
@@ -1760,7 +1802,7 @@ function ClassesPage() {
       const d = await api('/classes', { method: 'POST', body: payload });
       toast.success(`Created ${d.classes.length} class${d.classes.length > 1 ? 'es' : ''}`);
       setShowAdd(false); setForm(empty); load();
-    } catch (e) { toast.error(e.message); }
+    } catch (e) { toast.error(e.message); } finally { setSubmitting(false); }
   };
 
   const dayLabels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -1773,7 +1815,7 @@ function ClassesPage() {
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between">
-        <Tabs value={filter} onValueChange={setFilter}>
+        <Tabs value={filter} onValueChange={(v) => { setFilter(v); setSelectedIds([]); }}>
           <TabsList>
             <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
             <TabsTrigger value="past">Past</TabsTrigger>
@@ -1782,7 +1824,7 @@ function ClassesPage() {
         </Tabs>
 
         <div className="flex flex-wrap gap-2 w-full sm:w-auto">
-          <Select value={selectedStudentId} onValueChange={setSelectedStudentId}>
+          <Select value={selectedStudentId} onValueChange={(v) => { setSelectedStudentId(v); setSelectedIds([]); }}>
             <SelectTrigger className="w-full sm:w-[190px]">
               <SelectValue placeholder="Filter by Student" />
             </SelectTrigger>
@@ -1794,11 +1836,47 @@ function ClassesPage() {
           <Input
             placeholder="Search student or topic..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => { setSearchQuery(e.target.value); setSelectedIds([]); }}
             className="w-full sm:w-[200px]"
           />
         </div>
       </div>
+
+      {filtered.length > 0 && (
+        <div className="flex items-center justify-between p-3 bg-slate-100/90 border border-slate-200 rounded-lg text-sm shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <input
+              type="checkbox"
+              id="selectAllClasses"
+              checked={filtered.length > 0 && selectedIds.length === filtered.length}
+              onChange={toggleSelectAll}
+              className="w-4 h-4 accent-primary cursor-pointer"
+            />
+            <Label htmlFor="selectAllClasses" className="cursor-pointer font-semibold text-sm text-slate-800">
+              Select All ({filtered.length})
+            </Label>
+            {selectedIds.length > 0 ? (
+              <Badge variant="default" className="bg-primary text-primary-foreground text-xs font-semibold ml-2">
+                {selectedIds.length} selected
+              </Badge>
+            ) : (
+              <span className="text-xs text-muted-foreground ml-1">(Check boxes to bulk select)</span>
+            )}
+          </div>
+
+          {selectedIds.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setSelectedIds([])} className="text-xs px-2 h-8">
+                Clear Selection
+              </Button>
+              <Button size="sm" variant="destructive" onClick={deleteBatch} disabled={deletingBatch} className="gap-1.5 text-xs h-8 font-medium">
+                <Trash2 className="w-3.5 h-3.5" />
+                {deletingBatch ? 'Deleting...' : `Delete Selected (${selectedIds.length})`}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <Card><CardContent className="p-8 text-center text-muted-foreground">No classes match your filter.</CardContent></Card>
@@ -1807,7 +1885,15 @@ function ClassesPage() {
           {filtered.map(c => (
             <div key={c.id}>
               <div className="text-xs text-muted-foreground mb-1 ml-1">{fmtDate(c.startTime)}</div>
-              <ClassCard cls={c} onMarkAttendance={setAttCls} onEditClass={setEditCls} onDeleteClass={deleteClass} />
+              <ClassCard
+                cls={c}
+                onMarkAttendance={setAttCls}
+                onEditClass={setEditCls}
+                onDeleteClass={deleteClass}
+                selectable={true}
+                isSelected={selectedIds.includes(c.id)}
+                onToggleSelect={toggleSelect}
+              />
             </div>
           ))}
         </div>
@@ -1917,7 +2003,7 @@ function ClassesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
-            <Button onClick={create} disabled={!form.studentId}>Create Class</Button>
+            <Button onClick={create} disabled={!form.studentId || submitting}>{submitting ? 'Creating...' : 'Create Class'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -3042,6 +3128,7 @@ function CalendarPage() {
   const monthLabel = cursor.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 
   const handleQuickAdd = async () => {
+    if (quickSaving) return;
     if (!quickStudentId) return toast.error('Please select a student');
     if (!quickSlot) return;
     setQuickSaving(true);

@@ -1054,19 +1054,27 @@ async function handle(request, context) {
       if (!student) return json({ error: 'Student not found' }, 404);
 
       const startTimes = [];
+      const tz = b.scheduleTz || student.timezone || 'Asia/Kolkata';
       if (b.recurring && Array.isArray(b.recurringDays) && b.recurringDays.length > 0) {
-        const start = new Date(b.startDate || new Date().toISOString().split('T')[0]);
-        const end = new Date(b.endDate || new Date(start.getTime() + 90 * 24 * 3600 * 1000));
+        const startStr = b.startDate || new Date().toISOString().split('T')[0];
+        const defaultEnd = new Date(new Date(startStr).getTime() + 90 * 24 * 3600 * 1000).toISOString().split('T')[0];
+        const endStr = b.endDate || defaultEnd;
+        const [sY, sM, sD] = startStr.split('-').map(Number);
+        const [eY, eM, eD] = endStr.split('-').map(Number);
+        let cur = new Date(Date.UTC(sY, sM - 1, sD));
+        const end = new Date(Date.UTC(eY, eM - 1, eD));
         const defaultTimeStr = b.time || '17:00';
         const dayTimes = b.dayTimes || {}; // e.g. { "5": "18:30", "0": "10:00" }
-        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-          const dayNum = d.getDay();
+
+        while (cur <= end) {
+          const dayNum = cur.getUTCDay();
           if (b.recurringDays.includes(dayNum)) {
             const timeStr = dayTimes[dayNum] || dayTimes[String(dayNum)] || defaultTimeStr;
-            const dateStr = d.toISOString().split('T')[0];
+            const dateStr = cur.toISOString().split('T')[0];
             const occ = new Date(`${dateStr}T${timeStr}:00+05:30`);
             startTimes.push(occ);
           }
+          cur.setUTCDate(cur.getUTCDate() + 1);
         }
       } else if (b.startTime) {
         let st;
@@ -1086,13 +1094,24 @@ async function handle(request, context) {
 
       const created = [];
       for (const st of startTimes) {
+        const stIso = st.toISOString();
+        // Prevent duplicate class creation for the exact same teacher, student and start time
+        const existingClass = await database.collection('classes').findOne({
+          teacherId: user.id,
+          studentId: student.id,
+          startTime: stIso
+        });
+        if (existingClass) {
+          continue;
+        }
+
         const doc = {
           id: uuidv4(),
           teacherId: user.id,
           studentId: student.id,
           studentName: student.name,
           studentTimezone: student.timezone || 'Asia/Kolkata',
-          startTime: st.toISOString(),
+          startTime: stIso,
           endTime: new Date(st.getTime() + duration * 60000).toISOString(),
           duration,
           mode: mode === 'hybrid' ? 'online' : mode,
@@ -1144,7 +1163,23 @@ async function handle(request, context) {
         await processAttendanceDeduction(database, cls, 'cancelled', false, user.id);
       }
       await database.collection('classes').deleteOne({ id, teacherId: user.id });
-      return json({ ok: true });
+      return json({ success: true });
+    }
+
+    if (route === 'classes/batch-delete' && method === 'POST') {
+      if (user.role !== 'teacher') return json({ error: 'Forbidden' }, 403);
+      const ids = Array.isArray(body?.ids) ? body.ids : [];
+      if (ids.length === 0) return json({ error: 'No class IDs provided' }, 400);
+
+      const classesToDelete = await database.collection('classes').find({ id: { $in: ids }, teacherId: user.id }).toArray();
+      for (const cls of classesToDelete) {
+        if (cls && cls.packId) {
+          await processAttendanceDeduction(database, cls, 'cancelled', false, user.id);
+        }
+      }
+
+      const res = await database.collection('classes').deleteMany({ id: { $in: ids }, teacherId: user.id });
+      return json({ success: true, deletedCount: res.deletedCount });
     }
 
     if (route.startsWith('classes/') && pathParts[2] === 'attendance' && method === 'POST') {
