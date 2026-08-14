@@ -109,6 +109,7 @@ function localTimeToUtcIso(dateStr, timeStr, timeZone) {
 
 const fmtMoney = (n) => `₹${(n || 0).toLocaleString('en-IN')}`;
 const initials = (name = '') => name.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase();
+let alarmAudioCtx = null;
 
 function PasswordInput({ value, onChange, placeholder = '••••••••', disabled, className, ...props }) {
   const [show, setShow] = useState(false);
@@ -160,39 +161,49 @@ function playBellRingtone() {
   try {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     if (!AudioCtx) return;
-    const ctx = new AudioCtx();
+    const ctx = alarmAudioCtx || new AudioCtx();
+    alarmAudioCtx = ctx;
     if (ctx.state === 'suspended') {
       ctx.resume();
     }
 
-    // Play 3 bell chime tones in sequence (Ding-Dong-Ding)
-    const tones = [
-      { freq: 880, start: 0, duration: 0.8 },       // A5 chime
-      { freq: 1108.73, start: 0.35, duration: 0.8 }, // C#6 chime
-      { freq: 1318.51, start: 0.7, duration: 1.2 }   // E6 chime
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0.0001, ctx.currentTime);
+    master.gain.exponentialRampToValueAtTime(0.9, ctx.currentTime + 0.02);
+    master.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 2.4);
+    master.connect(ctx.destination);
+
+    const pulses = [
+      { freq: 880, start: 0 },
+      { freq: 1320, start: 0.28 },
+      { freq: 880, start: 0.56 },
+      { freq: 1320, start: 0.84 },
+      { freq: 988, start: 1.22 },
+      { freq: 1480, start: 1.50 },
+      { freq: 988, start: 1.78 },
     ];
 
-    tones.forEach(({ freq, start, duration }) => {
+    pulses.forEach(({ freq, start }) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
-      osc.type = 'sine';
+      osc.type = 'square';
       osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+      osc.frequency.linearRampToValueAtTime(freq * 0.96, ctx.currentTime + start + 0.18);
 
-      // Metallic Bell envelope: quick attack, exponential decay
       gain.gain.setValueAtTime(0, ctx.currentTime + start);
-      gain.gain.linearRampToValueAtTime(0.7, ctx.currentTime + start + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + duration);
+      gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + 0.24);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(master);
 
       osc.start(ctx.currentTime + start);
-      osc.stop(ctx.currentTime + start + duration);
+      osc.stop(ctx.currentTime + start + 0.25);
     });
 
     if ('vibrate' in navigator) {
-      navigator.vibrate([500, 250, 500, 250, 800]);
+      navigator.vibrate([900, 250, 900, 250, 1200]);
     }
   } catch (e) {
     console.warn('Audio play error:', e);
@@ -213,6 +224,7 @@ function NotificationButton() {
   const [loading, setLoading] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [showPromptModal, setShowPromptModal] = useState(false);
+  const [vapidKey, setVapidKey] = useState(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -223,6 +235,9 @@ function NotificationButton() {
       setStatus('denied');
     }
     api('/push/status').then(d => {
+      if (d.vapidPublicKey) {
+        setVapidKey(d.vapidPublicKey);
+      }
       if (d.enabled) {
         setStatus('enabled');
       } else {
@@ -247,19 +262,29 @@ function NotificationButton() {
         return;
       }
 
-      // 2. Register or fetch Service Worker
-      let reg = await navigator.serviceWorker.getRegistration('/sw.js');
-      if (!reg) {
-        reg = await navigator.serviceWorker.register('/sw.js');
-      }
+      // 2. Register Service Worker
+      const reg = await navigator.serviceWorker.register('/sw.js');
 
-      const vapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BGzKxr10ebrzCPYpglx2VL5fDjZa3D-K7YVOos3QODL88qI0kbG6sAftUie1DbOOe5Cewh0xuyHl0avHDDyF5rE';
+      // 3. Get VAPID key dynamically from backend
+      let activeVapid = vapidKey;
+      if (!activeVapid) {
+        try {
+          const d = await api('/push/status');
+          activeVapid = d.vapidPublicKey;
+          if (activeVapid) setVapidKey(activeVapid);
+        } catch (err) {
+          console.warn('Failed to load dynamic VAPID key:', err);
+        }
+      }
+      if (!activeVapid) {
+        activeVapid = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || 'BGzKxr10ebrzCPYpglx2VL5fDjZa3D-K7YVOos3QODL88qI0kbG6sAftUie1DbOOe5Cewh0xuyHl0avHDDyF5rE';
+      }
       
       let subscription = await reg.pushManager.getSubscription();
       if (!subscription) {
         subscription = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapid),
+          applicationServerKey: urlBase64ToUint8Array(activeVapid),
         });
       }
 
@@ -1035,8 +1060,6 @@ function TeacherDashboard({ onNavigate }) {
   const [data, setData] = useState(null);
   const [attCls, setAttCls] = useState(null);
   const [editCls, setEditCls] = useState(null);
-  const [alarmClass, setAlarmClass] = useState(null);
-  const chimedRef = useRef({});
 
   const nextClass = data?.nextClass;
   const countdown = useCountdown(nextClass?.startTime);
@@ -1045,36 +1068,6 @@ function TeacherDashboard({ onNavigate }) {
     try { setData(await api('/dashboard')); } catch (e) { toast.error(e.message); }
   };
   useEffect(() => { load(); }, []);
-
-  // Monitor upcoming classes for 15-minute bell alarm
-  useEffect(() => {
-    const check15MinAlarm = () => {
-      if (!data?.todayClasses) return;
-      const nowMs = Date.now();
-      const upcoming15 = data.todayClasses.find(c => {
-        if (c.status !== 'upcoming') return false;
-        const diff = new Date(c.startTime).getTime() - nowMs;
-        return diff > 0 && diff <= 15 * 60 * 1000;
-      });
-
-      if (upcoming15) {
-        const isDismissed = typeof sessionStorage !== 'undefined' && sessionStorage.getItem(`dismissed_alarm_${upcoming15.id}`);
-        if (!isDismissed) {
-          setAlarmClass(upcoming15);
-          if (!chimedRef.current[upcoming15.id]) {
-            chimedRef.current[upcoming15.id] = true;
-            playBellRingtone();
-          }
-        }
-      } else {
-        setAlarmClass(null);
-      }
-    };
-
-    check15MinAlarm();
-    const interval = setInterval(check15MinAlarm, 10000);
-    return () => clearInterval(interval);
-  }, [data]);
 
   const deleteClass = async (c) => {
     if (!confirm(`Are you sure you want to delete this class with ${c.studentName}?`)) return;
@@ -1110,45 +1103,6 @@ function TeacherDashboard({ onNavigate }) {
         <h1 className="text-2xl font-bold tracking-tight">Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening'} 👋</h1>
         <p className="text-muted-foreground">{fmtDateLong(new Date().toISOString())}</p>
       </div>
-
-      {alarmClass && (
-        <Card className="bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 text-white border-0 shadow-xl animate-pulse">
-          <CardContent className="p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <div className="p-3 bg-white/20 rounded-full animate-bounce">
-                <Bell className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2 text-amber-100 text-xs font-bold uppercase tracking-wider">
-                  <Sparkles className="w-4 h-4 text-amber-200" /> 15-Minute Class Alarm Bell 🔔
-                </div>
-                <h2 className="text-xl font-extrabold mt-0.5">
-                  Class with {alarmClass.studentName} starts in {Math.max(1, Math.ceil((new Date(alarmClass.startTime).getTime() - Date.now()) / 60000))} mins!
-                </h2>
-                <p className="text-xs text-amber-100 mt-0.5">
-                  {alarmClass.topic || 'French Class'} · Scheduled at {fmtTime(alarmClass.startTime)}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2 items-center">
-              <Button size="sm" variant="secondary" onClick={playBellRingtone} className="gap-1.5 font-semibold text-slate-900 bg-white hover:bg-slate-100">
-                <Bell className="w-4 h-4 text-amber-600" /> Ring Bell Sound 🔔
-              </Button>
-              {alarmClass.mode === 'online' && alarmClass.meetingLink && (
-                <Button size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold gap-1.5" onClick={() => window.open(alarmClass.meetingLink, '_blank')}>
-                  <Video className="w-4 h-4" /> Open Zoom
-                </Button>
-              )}
-              <Button size="sm" variant="ghost" className="text-white hover:bg-white/20" onClick={() => {
-                if (typeof sessionStorage !== 'undefined') sessionStorage.setItem(`dismissed_alarm_${alarmClass.id}`, 'true');
-                setAlarmClass(null);
-              }}>
-                Dismiss ✕
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {nextClass && (
         <Card className="bg-gradient-to-br from-primary to-blue-700 text-primary-foreground border-0 shadow-lg">
@@ -3434,6 +3388,95 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [showLogin, setShowLogin] = useState(false);
   const [showMobileMore, setShowMobileMore] = useState(false);
+  const [alarmClass, setAlarmClass] = useState(null);
+  const alarmIntervalRef = useRef(null);
+
+  const startRinging = () => {
+    if (alarmIntervalRef.current) return;
+    playBellRingtone();
+    alarmIntervalRef.current = setInterval(playBellRingtone, 3000);
+  };
+
+  const stopRinging = () => {
+    if (alarmIntervalRef.current) {
+      clearInterval(alarmIntervalRef.current);
+      alarmIntervalRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    if (!user) {
+      setAlarmClass(null);
+      stopRinging();
+      return;
+    }
+
+    const checkAlarm = async () => {
+      try {
+        const now = new Date();
+        const in15Min = new Date(now.getTime() + 15 * 60 * 1000);
+        const res = await api(`/classes?from=${now.toISOString()}&to=${in15Min.toISOString()}`);
+        if (res && res.classes && res.classes.length > 0) {
+          const upcoming = res.classes.find(c => {
+            if (c.status !== 'upcoming') return false;
+            const diff = new Date(c.startTime).getTime() - Date.now();
+            return diff > 0 && diff <= 15 * 60 * 1000;
+          });
+
+          if (upcoming) {
+            const isDismissed = typeof sessionStorage !== 'undefined' && sessionStorage.getItem(`dismissed_alarm_${upcoming.id}`);
+            if (!isDismissed) {
+              setAlarmClass(upcoming);
+              startRinging();
+            } else {
+              setAlarmClass(null);
+              stopRinging();
+            }
+          } else {
+            setAlarmClass(null);
+            stopRinging();
+          }
+        } else {
+          setAlarmClass(null);
+          stopRinging();
+        }
+      } catch (e) {
+        console.warn('Alarm poll failed:', e);
+      }
+    };
+
+    checkAlarm();
+    const interval = setInterval(checkAlarm, 15000);
+
+    return () => {
+      clearInterval(interval);
+      stopRinging();
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || typeof navigator === 'undefined' || !navigator.serviceWorker) return;
+
+    const handleServiceWorkerMessage = (event) => {
+      const message = event.data || {};
+      if (message.type !== 'class_alarm') return;
+
+      const cls = message.payload?.class;
+      if (!cls?.id) return;
+
+      const isDismissed = typeof sessionStorage !== 'undefined' && sessionStorage.getItem(`dismissed_alarm_${cls.id}`);
+      if (isDismissed) return;
+
+      setAlarmClass({ ...cls, status: 'upcoming' });
+      startRinging();
+      if (typeof window !== 'undefined' && window.focus) {
+        window.focus();
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+  }, [user]);
 
   useEffect(() => {
     const token = localStorage.getItem('cf_token');
@@ -3601,6 +3644,79 @@ function App() {
           )}
         </nav>
       </main>
+
+      {alarmClass && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[9999] flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-rose-600 via-orange-600 to-amber-500 rounded-2xl p-6 sm:p-8 max-w-lg w-full text-white shadow-2xl border border-white/20 animate-pulse text-center relative overflow-hidden">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.15),transparent)] animate-spin duration-[10000ms]" />
+            <div className="relative z-10 flex flex-col items-center">
+              <div className="p-4 bg-white/20 rounded-full animate-bounce mb-4">
+                <Bell className="w-10 h-10 text-white" />
+              </div>
+              <span className="text-xs font-bold uppercase tracking-widest text-amber-200">
+                🔔 15-Minute Class Alarm Bell
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold mt-2 leading-tight">
+                Class starts in {Math.max(1, Math.ceil((new Date(alarmClass.startTime).getTime() - Date.now()) / 60000))} mins!
+              </h2>
+              <div className="mt-4 p-4 bg-black/20 rounded-xl w-full text-left space-y-2 border border-white/10">
+                <div>
+                  <span className="text-xs text-rose-100 uppercase tracking-wide">Topic</span>
+                  <div className="font-semibold text-lg">{alarmClass.topic || 'Language Lesson'}</div>
+                </div>
+                {user.role === 'teacher' ? (
+                  <div>
+                    <span className="text-xs text-rose-100 uppercase tracking-wide">Student</span>
+                    <div className="font-semibold">{alarmClass.studentName || 'Student'}</div>
+                  </div>
+                ) : (
+                  <div>
+                    <span className="text-xs text-rose-100 uppercase tracking-wide">Tutor</span>
+                    <div className="font-semibold">Your Language Scoop Tutor</div>
+                  </div>
+                )}
+                <div>
+                  <span className="text-xs text-rose-100 uppercase tracking-wide">Scheduled At</span>
+                  <div className="font-semibold">{fmtTime(alarmClass.startTime)}</div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col sm:flex-row gap-3 w-full">
+                {alarmClass.mode === 'online' && alarmClass.meetingLink && (
+                  <Button
+                    size="lg"
+                    className="flex-1 bg-white hover:bg-slate-100 text-rose-700 font-bold gap-2 text-base shadow-lg"
+                    onClick={() => {
+                      window.open(alarmClass.meetingLink, '_blank');
+                      if (typeof sessionStorage !== 'undefined') {
+                        sessionStorage.setItem(`dismissed_alarm_${alarmClass.id}`, 'true');
+                      }
+                      setAlarmClass(null);
+                      stopRinging();
+                    }}
+                  >
+                    <Video className="w-5 h-5" /> Join Class (Zoom)
+                  </Button>
+                )}
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="flex-1 border-white/40 hover:bg-white/10 text-white font-bold gap-2 text-base"
+                  onClick={() => {
+                    if (typeof sessionStorage !== 'undefined') {
+                      sessionStorage.setItem(`dismissed_alarm_${alarmClass.id}`, 'true');
+                    }
+                    setAlarmClass(null);
+                    stopRinging();
+                  }}
+                >
+                  Dismiss Alarm
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Toaster position="top-center" />
     </div>

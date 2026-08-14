@@ -31,11 +31,50 @@ async function sendPushToUser(database, userId, payload) {
     try {
       await webpush.sendNotification(sub.subscription, body);
     } catch (e) {
+      console.error(`[Push Notification Error] Failed to send push to user ${userId}:`, {
+        statusCode: e.statusCode,
+        message: e.message,
+        body: e.body
+      });
       if (e.statusCode === 404 || e.statusCode === 410) {
         await database.collection('push_subscriptions').deleteOne({ _id: sub._id });
       }
     }
   }));
+}
+
+function buildClassAlarmPayload(c, recipientRole, timeStr) {
+  const isTeacher = recipientRole === 'teacher';
+  return {
+    type: 'class_alarm',
+    alarmKind: 'class_15_min',
+    title: isTeacher ? 'Class alarm: starts in 15 minutes' : 'Your class starts in 15 minutes',
+    body: isTeacher
+      ? `${c.studentName || 'Student'} - ${c.topic || 'French Class'} at ${timeStr}. Tap to open class.`
+      : `${c.topic || 'Language Class'} starts at ${timeStr}. Tap to join class.`,
+    url: c.meetingLink || '/',
+    tag: `alarm-15m-${isTeacher ? 'tch' : 'std'}-${c.id}`,
+    requireInteraction: true,
+    renotify: true,
+    silent: false,
+    vibrate: [900, 250, 900, 250, 1200, 300, 1200],
+    actions: [
+      { action: 'open', title: c.meetingLink ? 'Join class' : 'Open app' },
+      { action: 'dismiss', title: 'Dismiss' }
+    ],
+    class: {
+      id: c.id,
+      teacherId: c.teacherId,
+      studentId: c.studentId,
+      studentName: c.studentName,
+      topic: c.topic || '',
+      startTime: c.startTime,
+      endTime: c.endTime,
+      mode: c.mode,
+      meetingLink: c.meetingLink || '',
+      classroomLocation: c.classroomLocation || ''
+    }
+  };
 }
 
 let client;
@@ -48,10 +87,11 @@ async function getDb() {
     throw new Error('MONGO_URL environment variable is missing.');
   }
   if (!clientPromise) {
+    const useTls = !MONGO_URL.includes('localhost') && !MONGO_URL.includes('127.0.0.1');
     client = new MongoClient(MONGO_URL, {
       serverSelectionTimeoutMS: 5000,
       connectTimeoutMS: 5000,
-      tls: true,
+      ...(useTls ? { tls: true } : {})
     });
     clientPromise = client.connect();
   }
@@ -677,6 +717,165 @@ async function handle(request, context) {
       const user = await getAuthUser(request);
       if (!user) return json({ error: 'Unauthorized' }, 401);
       return json({ user });
+    }
+
+    // ---- CRON REMINDERS AND MORNING NOTIFICATIONS ----
+    if (route === 'cron/reminders' && (method === 'POST' || method === 'GET')) {
+      const now = new Date();
+      const nowIso = now.toISOString();
+      const in15MinIso = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+
+      // 1. 15-Minute Class Reminders
+      const upcoming15 = await database.collection('classes').find({
+        status: 'upcoming',
+        startTime: { $gte: nowIso, $lte: in15MinIso }
+      }).toArray();
+
+      for (const c of upcoming15) {
+        // Teacher timezone lookup
+        let teacherTz = 'Asia/Kolkata';
+        if (c.teacherId) {
+          const teacher = await database.collection('users').findOne({ id: c.teacherId });
+          if (teacher && teacher.timezone) {
+            teacherTz = teacher.timezone;
+          }
+        }
+        const timeStrTeacher = new Date(c.startTime).toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: teacherTz
+        });
+
+        // Push to Teacher
+        if (!c.reminded15MinTeacher && c.teacherId) {
+          await sendPushToUser(database, c.teacherId, buildClassAlarmPayload(c, 'teacher', timeStrTeacher));
+          await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinTeacher: true } });
+        }
+
+        // Push to Student
+        if (!c.reminded15MinStudent && c.studentId) {
+          const student = await database.collection('students').findOne({ id: c.studentId });
+          if (student && student.userId) {
+            const studentTz = student.timezone || 'Asia/Kolkata';
+            const timeStrStudent = new Date(c.startTime).toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true,
+              timeZone: studentTz
+            });
+            await sendPushToUser(database, student.userId, buildClassAlarmPayload(c, 'student', timeStrStudent));
+            await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinStudent: true } });
+          }
+        }
+      }
+
+      // 2. Daily Morning Notification
+      // Find all users who have active push subscriptions
+      const subscriptions = await database.collection('push_subscriptions').find().toArray();
+      const uniqueUserIds = [...new Set(subscriptions.map(s => s.userId))];
+
+      for (const userId of uniqueUserIds) {
+        const userObj = await database.collection('users').findOne({ id: userId });
+        if (!userObj) continue;
+
+        let tz = 'Asia/Kolkata';
+        let studentId = null;
+        if (userObj.role === 'student') {
+          const studentProfile = await database.collection('students').findOne({ userId: userObj.id });
+          if (studentProfile) {
+            tz = studentProfile.timezone || 'Asia/Kolkata';
+            studentId = studentProfile.id;
+          }
+        } else {
+          tz = userObj.timezone || 'Asia/Kolkata';
+        }
+
+        // Calculate current date and local time for user's timezone
+        let ymd, localHour, localMinute;
+        try {
+          ymd = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+          localHour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hour12: false }).format(now), 10);
+          localMinute = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: tz, minute: 'numeric' }).format(now), 10);
+        } catch (err) {
+          ymd = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+          localHour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', hour12: false }).format(now), 10);
+          localMinute = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', minute: 'numeric' }).format(now), 10);
+        }
+
+        // If local time is at or after 5:30 AM
+        const isAfterMorningTime = localHour > 5 || (localHour === 5 && localMinute >= 30);
+        if (isAfterMorningTime && userObj.lastMorningNotificationDate !== ymd) {
+          // Calculate day start/end ISO in user's timezone
+          let tzOffsetMs = 0;
+          try {
+            const tzDateStr = now.toLocaleString('en-US', { timeZone: tz });
+            tzOffsetMs = new Date(tzDateStr).getTime() - now.getTime();
+          } catch (e) {}
+
+          const dayStartLocal = new Date(`${ymd}T00:00:00.000`);
+          const dayStartIso = new Date(dayStartLocal.getTime() - tzOffsetMs).toISOString();
+          const dayEndLocal = new Date(`${ymd}T23:59:59.999`);
+          const dayEndIso = new Date(dayEndLocal.getTime() - tzOffsetMs).toISOString();
+
+          // Query classes for today
+          let query = {
+            status: 'upcoming',
+            startTime: { $gte: dayStartIso, $lte: dayEndIso }
+          };
+          if (userObj.role === 'student') {
+            if (!studentId) continue;
+            query.studentId = studentId;
+          } else {
+            query.teacherId = userObj.id;
+          }
+
+          const todayClasses = await database.collection('classes').find(query).sort({ startTime: 1 }).toArray();
+          const count = todayClasses.length;
+
+          if (count > 0) {
+            let title = "Today's class summary";
+            let body = '';
+            const schedulePreview = todayClasses.slice(0, 3).map(cls => {
+              const classTime = new Date(cls.startTime).toLocaleTimeString('en-US', {
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: tz
+              });
+              return userObj.role === 'teacher'
+                ? `${classTime} - ${cls.studentName || 'Student'}`
+                : `${classTime} - ${cls.topic || 'Class'}`;
+            }).join('; ');
+            if (userObj.role === 'teacher') {
+              body = `You have ${count} class${count > 1 ? 'es' : ''} today. ${schedulePreview}`;
+            } else {
+              body = `You have ${count} class${count > 1 ? 'es' : ''} today. ${schedulePreview}`;
+            }
+
+            await sendPushToUser(database, userObj.id, {
+              type: 'morning_summary',
+              title,
+              body,
+              url: '/',
+              tag: `morning-summary-${ymd}`,
+              requireInteraction: true,
+              renotify: true,
+              silent: false,
+              vibrate: [600, 200, 600, 200, 900],
+              actions: [{ action: 'open', title: 'Open schedule' }]
+            });
+          }
+
+          // Mark notification as sent for today
+          await database.collection('users').updateOne(
+            { id: userObj.id },
+            { $set: { lastMorningNotificationDate: ymd } }
+          );
+        }
+      }
+
+      return json({ ok: true, checkedClasses: upcoming15.length });
     }
 
 
@@ -1389,7 +1588,7 @@ async function handle(request, context) {
 
       const upcoming = await database.collection('classes').find({ studentId: student.id, startTime: { $gte: now } }).sort({ startTime: 1 }).limit(5).toArray();
       const past = await database.collection('classes').find({ studentId: student.id, startTime: { $lt: now } }).sort({ startTime: -1 }).limit(20).toArray();
-
+      // Scheduled push reminders are sent only by /api/cron/reminders.
       const thisMonthClasses = await database.collection('classes').find({ studentId: student.id, startTime: { $gte: startISO } }).toArray();
       const monthlyCompleted = thisMonthClasses.filter(c => getAttendanceRules(c.status).countCompleted).length;
       const monthlyBillable = thisMonthClasses.filter(c => c.isBillable).length;
@@ -1784,7 +1983,7 @@ async function handle(request, context) {
 
     if (route === 'push/status' && method === 'GET') {
       const count = await database.collection('push_subscriptions').countDocuments({ userId: user.id });
-      return json({ enabled: count > 0, count });
+      return json({ enabled: count > 0, count, vapidPublicKey: VAPID_PUBLIC_KEY });
     }
 
     if (route === 'push/test' && method === 'POST') {
@@ -1910,40 +2109,7 @@ async function handle(request, context) {
       const homeworkToReview = await database.collection('homework').countDocuments({ teacherId: user.id, status: 'submitted' });
       const billableThisMonth = monthClasses.filter(c => c.billable).length;
       const monthlyRevenue = monthClasses.filter(c => c.billable).reduce((sum, c) => sum + (c.feeSnapshot || 0), 0);
-      // Check for classes starting within 15 minutes and send automated 15-min pre-class push alarm to teacher & student
-      const in15MinIso = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
-      const upcoming15 = todayClasses.filter(c => c.status === 'upcoming' && c.startTime >= now.toISOString() && c.startTime <= in15MinIso);
-      for (const c of upcoming15) {
-        const timeStr = new Date(c.startTime).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz });
-        
-        // Push to Teacher
-        if (!c.reminded15MinTeacher && c.teacherId) {
-          sendPushToUser(database, c.teacherId, {
-            title: `🔔 Class starts in 15 minutes!`,
-            body: `${c.studentName} — ${c.topic || 'French Class'} at ${timeStr}. Tap to open Zoom.`,
-            url: c.meetingLink || '/',
-            tag: `alarm-15m-tch-${c.id}`,
-            requireInteraction: true,
-          }).catch(() => {});
-          await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinTeacher: true } });
-        }
-
-        // Push to Student
-        if (!c.reminded15MinStudent && c.studentId) {
-          const stObj = await database.collection('students').findOne({ id: c.studentId });
-          if (stObj && stObj.userId) {
-            sendPushToUser(database, stObj.userId, {
-              title: `🔔 Your class starts in 15 minutes!`,
-              body: `${c.topic || 'Language Class'} with tutor at ${timeStr}. Tap to join Zoom!`,
-              url: c.meetingLink || '/',
-              tag: `alarm-15m-std-${c.id}`,
-              requireInteraction: true,
-            }).catch(() => {});
-            await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinStudent: true } });
-          }
-        }
-      }
-
+      // Scheduled push reminders are sent only by /api/cron/reminders.
       const sMap = {};
       for (const s of students) sMap[s.id] = s;
 

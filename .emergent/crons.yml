@@ -1,0 +1,5 @@
+crons:
+  - name: send-class-reminders
+    schedule: "*/1 * * * *"
+    path: "/api/cron/reminders"
+    method: "POST"
