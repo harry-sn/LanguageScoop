@@ -814,9 +814,11 @@ async function handle(request, context) {
           localMinute = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', minute: 'numeric' }).format(now), 10);
         }
 
-        // Send one summary per local day at (or on the first cron run after) 5:15 AM.
-        const isAfterMorningTime = localHour > 5 || (localHour === 5 && localMinute >= 15);
-        if (isAfterMorningTime && userObj.lastMorningNotificationDate !== ymd) {
+        // Send one summary per local day between 5:15 and 6:00 AM. The wider
+        // window tolerates scheduler delays without sending a stale summary later.
+        const localMinutes = (localHour * 60) + localMinute;
+        const isMorningWindow = localMinutes >= (5 * 60 + 15) && localMinutes < (6 * 60);
+        if (isMorningWindow && userObj.lastMorningNotificationDate !== ymd) {
           // Calculate day start/end ISO in user's timezone
           let tzOffsetMs = 0;
           try {
