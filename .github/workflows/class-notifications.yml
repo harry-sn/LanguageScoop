@@ -1,0 +1,25 @@
+name: Class notifications
+
+on:
+  schedule:
+    # Runs every five minutes. The API sends the daily summary once after
+    # 05:15 in each user's timezone and alarms for classes starting soon.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: class-notifications
+  cancel-in-progress: false
+
+jobs:
+  send-notifications:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Trigger reminder processing
+        run: |
+          curl --fail --silent --show-error \
+            --retry 2 \
+            --retry-delay 5 \
+            --max-time 60 \
+            https://language-scoop.vercel.app/api/cron/reminders

@@ -293,7 +293,7 @@ function NotificationButton() {
       setShowPromptModal(false);
       setShowGuide(false);
       playBellRingtone();
-      toast.success('🔔 15-Minute Class Alerts & Ringtone Enabled!');
+      toast.success('🔔 Daily Schedule & 15-Minute Class Alerts Enabled!');
     } catch (e) {
       console.error('Push enable error:', e);
       toast.error(e.message || 'Failed to enable notifications');
@@ -360,7 +360,7 @@ function NotificationButton() {
               <Bell className="w-5 h-5 text-amber-500 animate-bounce" /> Enable Class Alarm Bell 🔔
             </DialogTitle>
             <DialogDescription className="text-sm">
-              Never miss a class! Get automatic 15-minute pre-class push notifications and loud school bell ringtones on your Android phone and browser.
+              Get your complete daily schedule around 5:15 AM, plus automatic 15-minute pre-class push notifications and alarm alerts on your Android phone and browser.
             </DialogDescription>
           </DialogHeader>
 
@@ -370,6 +370,7 @@ function NotificationButton() {
                 <Volume2 className="w-4 h-4 text-amber-600" /> What this does:
               </div>
               <ul className="list-disc pl-4 space-y-1">
+                <li>Sends one notification around 5:15 AM with every class scheduled that day.</li>
                 <li>Rings a loud 3-stage school bell 15 minutes before every scheduled class.</li>
                 <li>Sends instant Zoom join links directly to your phone lockscreen.</li>
                 <li>Notifies both Tutors and Students automatically.</li>

@@ -27,10 +27,14 @@ try {
 async function sendPushToUser(database, userId, payload) {
   const subs = await database.collection('push_subscriptions').find({ userId }).toArray();
   const body = JSON.stringify(payload);
+  let sent = 0;
+  let failed = 0;
   await Promise.all(subs.map(async (sub) => {
     try {
       await webpush.sendNotification(sub.subscription, body);
+      sent += 1;
     } catch (e) {
+      failed += 1;
       console.error(`[Push Notification Error] Failed to send push to user ${userId}:`, {
         statusCode: e.statusCode,
         message: e.message,
@@ -41,6 +45,7 @@ async function sendPushToUser(database, userId, payload) {
       }
     }
   }));
+  return { attempted: subs.length, sent, failed };
 }
 
 function buildClassAlarmPayload(c, recipientRole, timeStr) {
@@ -749,8 +754,12 @@ async function handle(request, context) {
 
         // Push to Teacher
         if (!c.reminded15MinTeacher && c.teacherId) {
-          await sendPushToUser(database, c.teacherId, buildClassAlarmPayload(c, 'teacher', timeStrTeacher));
-          await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinTeacher: true } });
+          const delivery = await sendPushToUser(database, c.teacherId, buildClassAlarmPayload(c, 'teacher', timeStrTeacher));
+          // Only mark a reminder delivered when at least one device accepted it.
+          // Failed/expired subscriptions can then be retried by the next cron run.
+          if (delivery.sent > 0) {
+            await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinTeacher: true } });
+          }
         }
 
         // Push to Student
@@ -764,8 +773,10 @@ async function handle(request, context) {
               hour12: true,
               timeZone: studentTz
             });
-            await sendPushToUser(database, student.userId, buildClassAlarmPayload(c, 'student', timeStrStudent));
-            await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinStudent: true } });
+            const delivery = await sendPushToUser(database, student.userId, buildClassAlarmPayload(c, 'student', timeStrStudent));
+            if (delivery.sent > 0) {
+              await database.collection('classes').updateOne({ id: c.id }, { $set: { reminded15MinStudent: true } });
+            }
           }
         }
       }
@@ -803,8 +814,8 @@ async function handle(request, context) {
           localMinute = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', minute: 'numeric' }).format(now), 10);
         }
 
-        // If local time is at or after 5:30 AM
-        const isAfterMorningTime = localHour > 5 || (localHour === 5 && localMinute >= 30);
+        // Send one summary per local day at (or on the first cron run after) 5:15 AM.
+        const isAfterMorningTime = localHour > 5 || (localHour === 5 && localMinute >= 15);
         if (isAfterMorningTime && userObj.lastMorningNotificationDate !== ymd) {
           // Calculate day start/end ISO in user's timezone
           let tzOffsetMs = 0;
@@ -836,7 +847,7 @@ async function handle(request, context) {
           if (count > 0) {
             let title = "Today's class summary";
             let body = '';
-            const schedulePreview = todayClasses.slice(0, 3).map(cls => {
+            const schedulePreview = todayClasses.map(cls => {
               const classTime = new Date(cls.startTime).toLocaleTimeString('en-US', {
                 hour: 'numeric',
                 minute: '2-digit',
@@ -853,7 +864,7 @@ async function handle(request, context) {
               body = `You have ${count} class${count > 1 ? 'es' : ''} today. ${schedulePreview}`;
             }
 
-            await sendPushToUser(database, userObj.id, {
+            const delivery = await sendPushToUser(database, userObj.id, {
               type: 'morning_summary',
               title,
               body,
@@ -865,6 +876,9 @@ async function handle(request, context) {
               vibrate: [600, 200, 600, 200, 900],
               actions: [{ action: 'open', title: 'Open schedule' }]
             });
+
+            // Do not suppress retries when every registered device rejected the push.
+            if (delivery.sent === 0) continue;
           }
 
           // Mark notification as sent for today
